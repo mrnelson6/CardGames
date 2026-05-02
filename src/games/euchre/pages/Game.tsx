@@ -42,7 +42,7 @@ export function EuchreGamePage() {
   const [plays, setPlays] = useState<TrickPlayRow[]>([]);
   // Resolved tricks for the entire game; we filter by current hand_number
   // when rendering trick counts.
-  const [resolvedTricks, setResolvedTricks] = useState<Array<{ hand_number: number; winner_seat: number | null }>>([]);
+  const [resolvedTricks, setResolvedTricks] = useState<Array<{ id: string; hand_number: number; winner_seat: number | null }>>([]);
   // Snapshot of the most-recently-completed trick — kept on screen for ~2.5s
   // after current_trick_id clears so players can see who won. We stamp the
   // hand number onto the snapshot so the renderer can drop it the instant
@@ -238,10 +238,10 @@ export function EuchreGamePage() {
     const refresh = async () => {
       const { data } = await supabase
         .from('tricks')
-        .select('hand_number, winner_seat')
+        .select('id, hand_number, winner_seat')
         .eq('game_id', gameId);
       if (cancelled) return;
-      setResolvedTricks((data ?? []) as Array<{ hand_number: number; winner_seat: number | null }>);
+      setResolvedTricks((data ?? []) as Array<{ id: string; hand_number: number; winner_seat: number | null }>);
     };
     refresh();
     const unsub = subscribeWithReconnect({
@@ -317,10 +317,20 @@ export function EuchreGamePage() {
     phase === 'play' && trump !== null ? legalPlays(myCards, ledCard, trump) : [];
 
   // Tricks won this hand — counts per seat plus team rollups.
+  // Important: skip a trick whose id still matches eu.current_trick_id.
+  // Realtime can deliver the tricks UPDATE (winner_seat set) before the
+  // euchre_games UPDATE (current_trick_id cleared), and during that
+  // window the trick's plays are still in `plays` state. Counting it
+  // here too would double-count and briefly drop opponent backs by one
+  // extra card.
   const tricksPerSeat: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0 };
   let tricksThisHand = 0;
   for (const t of resolvedTricks) {
-    if (t.hand_number === eu.hand_number && t.winner_seat !== null) {
+    if (
+      t.hand_number === eu.hand_number &&
+      t.winner_seat !== null &&
+      t.id !== eu.current_trick_id
+    ) {
       tricksPerSeat[t.winner_seat] = (tricksPerSeat[t.winner_seat] ?? 0) + 1;
       tricksThisHand += 1;
     }
