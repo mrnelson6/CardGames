@@ -495,16 +495,6 @@ export function EuchreGamePage() {
                       {myCards.map((c) => (
                         <motion.div
                           key={c}
-                          layoutId={`card-${c}`}
-                          // Shared layoutId with the trick area: when this
-                          // card gets played, framer-motion animates the
-                          // same motion element flying from your hand to
-                          // the table center. exit fires only when the card
-                          // is discarded (no matching layoutId destination).
-                          // Note: NO `layout` prop. We don't want the
-                          // remaining hand cards to layout-animate when one
-                          // leaves — that's what was causing the trick area
-                          // to flicker as a side effect of hand reflow.
                           initial={{ opacity: 0, scale: 0.85 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.85, y: -28 }}
@@ -693,7 +683,6 @@ function TrickArea({
         <AnimatePresence>
           {showing.map((p) => {
             const offset = offsetFor(p.seat);
-            const isSelf = offset === 0;
             const isWinner = winnerSeat !== null && p.seat === winnerSeat;
             const dim = isCompletedView && !isWinner;
             const rotation = ROTATION[offset];
@@ -704,23 +693,14 @@ function TrickArea({
             const baseClass = `${CELL_CLASS[offset]} ${
               dim ? 'opacity-40 grayscale' : isWinner ? 'ring-2 ring-emerald-300 rounded' : ''
             }`;
-            const motionProps = isSelf
-              ? {
-                  layoutId: `card-${p.card}`,
-                  animate: { rotate: rotation },
-                  exit: exitTarget,
-                }
-              : {
-                  initial: { ...ENTRY_OFFSET[offset], opacity: 0, rotate: rotation },
-                  animate: { x: 0, y: 0, opacity: 1, rotate: rotation },
-                  exit: exitTarget,
-                };
             return (
               <motion.div
                 key={p.seat}
                 className={baseClass}
+                initial={{ ...ENTRY_OFFSET[offset], opacity: 0, rotate: rotation }}
+                animate={{ x: 0, y: 0, opacity: 1, rotate: rotation }}
+                exit={exitTarget}
                 transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-                {...motionProps}
               >
                 <CardButton card={p.card} legal />
               </motion.div>
@@ -738,11 +718,6 @@ function TrickArea({
 function UpcardDisplay({ card, status }: { card: Card; status: 'face_up' | 'turned_down' | 'taken' }) {
   return (
     <motion.div
-      // Shared layoutId with hand cards: when the dealer takes the upcard
-      // (order-up) and they're the viewer, the same motion element flies
-      // from this center spot into their hand. For an opponent dealer,
-      // there's no matching layoutId and AnimatePresence's exit fades it.
-      layoutId={`card-${card}`}
       className="flex flex-col items-center"
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
