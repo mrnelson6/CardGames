@@ -173,7 +173,7 @@ export function EuchreRoomPage() {
             Copy
           </button>
           <button
-            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/#/games/euchre/room/${code}`)}
+            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/games/euchre/room/${code}`)}
             className="rounded border border-slate-600 px-3 py-1 text-sm hover:bg-slate-700"
           >
             Copy link

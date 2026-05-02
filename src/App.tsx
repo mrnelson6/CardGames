@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { HashRouter } from 'react-router-dom';
+import { BrowserRouter } from 'react-router-dom';
 import { AppRoutes } from './routes';
 import { AuthProvider } from './lib/auth';
 import { bindRealtimeAuth } from './lib/realtime';
@@ -11,9 +11,9 @@ export function App() {
 
   return (
     <AuthProvider>
-      <HashRouter>
+      <BrowserRouter>
         <AppRoutes />
-      </HashRouter>
+      </BrowserRouter>
     </AuthProvider>
   );
 }
