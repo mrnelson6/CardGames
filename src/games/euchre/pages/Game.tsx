@@ -494,9 +494,36 @@ export function EuchreGamePage() {
                   )}
                 </div>
               )}
+              <TrickStack count={tricksPerSeat[seat]} />
             </div>
           );
         })}
+
+        {trump && (
+          <div className="col-start-1 row-start-1 flex items-start justify-start">
+            <div
+              className={`rounded-md border-2 px-2 py-1 ${
+                trump === 'D' || trump === 'H'
+                  ? 'bg-rose-950/80 border-rose-700 text-rose-300'
+                  : 'bg-slate-800 border-slate-600 text-slate-200'
+              }`}
+            >
+              <div className="text-[10px] uppercase tracking-widest opacity-70">Trump</div>
+              <div className="text-3xl leading-none">{SUIT_LABEL[trump]}</div>
+              {eu.maker_seat !== null && (
+                <div className="text-[10px] opacity-70 mt-0.5">
+                  by {eu.maker_seat === mySeat
+                    ? 'you'
+                    : (() => {
+                        const p = players.find((pp) => pp.seat === eu.maker_seat);
+                        return p?.user_id ? usernames.get(p.user_id) ?? `seat ${eu.maker_seat}` : `seat ${eu.maker_seat}`;
+                      })()}
+                  {eu.alone_seat !== null && <span className="ml-1 text-amber-300">·alone</span>}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="col-start-2 row-start-2 flex flex-col items-center justify-center gap-2">
           <TrickArea
@@ -670,6 +697,29 @@ function CardBack({ dim }: { dim: boolean }) {
           'repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.1) 4px 8px)',
       }}
     />
+  );
+}
+
+// Tiny stack of face-down cards next to a seat — one tile per trick won
+// in the current hand. Renders nothing when count is 0.
+function TrickStack({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <div className="flex">
+        {Array.from({ length: count }).map((_, i) => (
+          <div
+            key={i}
+            className="h-3 w-5 rounded-sm border border-blue-950 bg-blue-700 -ml-2 first:ml-0"
+            style={{
+              backgroundImage:
+                'repeating-linear-gradient(45deg, transparent 0 2px, rgba(255,255,255,0.15) 2px 4px)',
+            }}
+          />
+        ))}
+      </div>
+      <span className="text-[10px] text-slate-400">{count} won</span>
+    </div>
   );
 }
 
