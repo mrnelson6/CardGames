@@ -499,33 +499,19 @@ export function EuchreGamePage() {
           );
         })}
 
-        {trump && (
-          <div className="col-start-1 row-start-1 flex items-start justify-start">
-            <div
-              className={`rounded-md border-2 px-2 py-1 ${
-                trump === 'D' || trump === 'H'
-                  ? 'bg-rose-950/80 border-rose-700 text-rose-300'
-                  : 'bg-slate-800 border-slate-600 text-slate-200'
-              }`}
-            >
-              <div className="text-[10px] uppercase tracking-widest opacity-70">Trump</div>
-              <div className="text-3xl leading-none">{SUIT_LABEL[trump]}</div>
-              {eu.maker_seat !== null && (
-                <div className="text-[10px] opacity-70 mt-0.5">
-                  by {eu.maker_seat === mySeat
-                    ? 'you'
-                    : (() => {
-                        const p = players.find((pp) => pp.seat === eu.maker_seat);
-                        return p?.user_id ? usernames.get(p.user_id) ?? `seat ${eu.maker_seat}` : `seat ${eu.maker_seat}`;
-                      })()}
-                  {eu.alone_seat !== null && <span className="ml-1 text-amber-300">·alone</span>}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
-        <div className="col-start-2 row-start-2 flex flex-col items-center justify-center gap-2">
+        <div className="col-start-2 row-start-2 relative flex flex-col items-center justify-center gap-2">
+          {trump && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+              <span
+                className={`text-[10rem] leading-none ${
+                  trump === 'D' || trump === 'H' ? 'text-rose-500/15' : 'text-slate-100/15'
+                }`}
+              >
+                {SUIT_LABEL[trump]}
+              </span>
+            </div>
+          )}
           <TrickArea
             // Only show live plays when the server says a trick is active
             // — guards against stale Realtime callbacks repopulating the
