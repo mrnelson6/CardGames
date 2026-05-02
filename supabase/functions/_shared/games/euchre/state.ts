@@ -16,7 +16,7 @@ import {
   trickWinner,
 } from './euchre.ts';
 
-export const TURN_SECONDS = 30;
+export const TURN_SECONDS = 45;
 
 export interface FullGame {
   id: string;

@@ -72,4 +72,6 @@ export const euchreApi = {
       'invite-to-party',
       { to_user },
     ),
+  resumeControl: (game_id: string) =>
+    invoke<{ ok: true; was_bot: boolean }>('resume-control', { game_id }),
 };

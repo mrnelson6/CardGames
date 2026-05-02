@@ -13,7 +13,7 @@ import type {
   Suit,
   TrickPlayRow,
 } from '../../../lib/database.types';
-import { effectiveSuit, legalPlays } from '../cards';
+import { effectiveSuit, legalPlays, trickWinner } from '../cards';
 import { RANK_LABEL, SUIT_LABEL, isRed, rankOf, suitOf } from '../../../lib/cards-base';
 import { BidPanel } from '../components/BidPanel';
 import { ScorePanel } from '../components/ScorePanel';
@@ -40,6 +40,13 @@ export function EuchreGamePage() {
   const [usernames, setUsernames] = useState<Map<string, string>>(new Map());
   const [hand, setHand] = useState<GameHandRow | null>(null);
   const [plays, setPlays] = useState<TrickPlayRow[]>([]);
+  // Snapshot of the most-recently-completed trick — kept on screen for ~2.5s
+  // after current_trick_id clears so players can see who won. Cleared on
+  // hand boundary so a stale trick from hand N doesn't bleed into hand N+1.
+  const [recentTrick, setRecentTrick] = useState<{
+    plays: TrickPlayRow[];
+    winnerSeat: number | null;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
@@ -147,7 +154,18 @@ export function EuchreGamePage() {
   // Load current trick + plays whenever current_trick_id changes.
   useEffect(() => {
     if (!eu?.current_trick_id) {
-      setPlays([]);
+      // Trick just ended — snapshot what we had so the cards stay visible
+      // for a beat with the winner highlighted, then clear.
+      setPlays((prev) => {
+        if (prev.length > 0 && eu?.trump_suit) {
+          const winnerSeat = trickWinner(
+            prev.map((p) => ({ seat: p.seat, card: p.card })),
+            eu.trump_suit,
+          );
+          setRecentTrick({ plays: prev, winnerSeat });
+        }
+        return [];
+      });
       return;
     }
     const trickId = eu.current_trick_id;
@@ -179,6 +197,19 @@ export function EuchreGamePage() {
     });
     return () => { cancelled = true; unsub(); };
   }, [eu?.current_trick_id]);
+
+  // Auto-clear the recent-trick snapshot after a beat.
+  useEffect(() => {
+    if (!recentTrick) return;
+    const t = setTimeout(() => setRecentTrick(null), 2500);
+    return () => clearTimeout(t);
+  }, [recentTrick]);
+
+  // Hand boundary: if the hand_number changes (or the upcard reappears for a
+  // fresh deal) drop any leftover trick visualization immediately.
+  useEffect(() => {
+    setRecentTrick(null);
+  }, [eu?.hand_number, eu?.upcard_status === 'face_up']);
 
   // Resolve usernames once.
   useEffect(() => {
@@ -252,6 +283,10 @@ export function EuchreGamePage() {
   const onCallTrump = (suit: Suit, alone: boolean) => guard(() => euchreApi.callTrump(game.id, suit, alone));
   const onDiscard = (card: Card) => guard(() => euchreApi.discard(game.id, card));
   const onPlay = (card: Card) => guard(() => euchreApi.playCard(game.id, card));
+  const onResume = guard(() => euchreApi.resumeControl(game.id));
+
+  const myPlayerRow = mySeat !== null ? players.find((p) => p.seat === mySeat) : undefined;
+  const meIsBot = myPlayerRow?.is_bot === true;
 
   function guard<T>(fn: () => Promise<T>): () => Promise<void> {
     return async () => {
@@ -300,6 +335,19 @@ export function EuchreGamePage() {
       {error && (
         <div className="mb-3 rounded bg-red-900/50 border border-red-700 p-2 text-sm text-red-200">
           {error}
+        </div>
+      )}
+
+      {meIsBot && (
+        <div className="mb-3 rounded bg-amber-900/40 border border-amber-700 p-3 text-sm flex items-center justify-between gap-3 flex-wrap">
+          <span>A bot is playing your seat after missed turns.</span>
+          <button
+            onClick={() => onResume()}
+            disabled={busy}
+            className="rounded bg-amber-500 hover:bg-amber-400 text-slate-900 px-3 py-1 font-medium disabled:opacity-50"
+          >
+            Resume control
+          </button>
         </div>
       )}
 
@@ -361,7 +409,13 @@ export function EuchreGamePage() {
         })}
 
         <div className="col-start-2 row-start-2 flex flex-col items-center justify-center gap-2">
-          <TrickArea plays={plays} mySeat={mySeat} usernames={usernames} players={players} />
+          <TrickArea
+            plays={plays}
+            mySeat={mySeat}
+            usernames={usernames}
+            players={players}
+            completed={recentTrick}
+          />
           {eu.upcard && eu.upcard_status !== 'taken' && (
             <UpcardDisplay card={eu.upcard} status={eu.upcard_status ?? 'face_up'} />
           )}
@@ -424,25 +478,49 @@ function TrickArea({
   mySeat,
   usernames,
   players,
+  completed,
 }: {
   plays: TrickPlayRow[];
   mySeat: Seat | null;
   usernames: Map<string, string>;
   players: GamePlayerRow[];
+  completed: { plays: TrickPlayRow[]; winnerSeat: number | null } | null;
 }) {
-  if (plays.length === 0) return <div className="text-xs text-slate-500 italic">— trick —</div>;
+  if (plays.length === 0 && !completed) {
+    return <div className="text-xs text-slate-500 italic">— trick —</div>;
+  }
+  // Active trick takes priority over the completed-snapshot.
+  const showing = plays.length > 0 ? plays : completed!.plays;
+  const winnerSeat = plays.length > 0 ? null : completed!.winnerSeat;
+  const isCompletedView = plays.length === 0 && !!completed;
+  const winnerName = (() => {
+    if (winnerSeat === null) return null;
+    const p = players.find((pp) => pp.seat === winnerSeat);
+    if (!p?.user_id) return `seat ${winnerSeat}`;
+    if (winnerSeat === mySeat) return 'you';
+    return usernames.get(p.user_id) ?? `seat ${winnerSeat}`;
+  })();
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2">
-      {plays.map((p) => {
-        const player = players.find((pp) => pp.seat === p.seat);
-        const name = player?.user_id ? usernames.get(player.user_id) ?? '…' : `seat ${p.seat}`;
-        return (
-          <div key={p.seat} className="flex flex-col items-center">
-            <span className="text-[10px] text-slate-300">{p.seat === mySeat ? 'you' : name}</span>
-            <CardButton card={p.card} legal />
-          </div>
-        );
-      })}
+    <div className="flex flex-col items-center gap-1">
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        {showing.map((p) => {
+          const player = players.find((pp) => pp.seat === p.seat);
+          const name = player?.user_id ? usernames.get(player.user_id) ?? '…' : `seat ${p.seat}`;
+          const isWinner = winnerSeat !== null && p.seat === winnerSeat;
+          const dim = isCompletedView && !isWinner;
+          return (
+            <div key={p.seat} className="flex flex-col items-center">
+              <span className="text-[10px] text-slate-300">{p.seat === mySeat ? 'you' : name}</span>
+              <div className={dim ? 'opacity-40 grayscale' : isWinner ? 'ring-2 ring-emerald-300 rounded' : ''}>
+                <CardButton card={p.card} legal />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {winnerName && (
+        <div className="text-xs text-emerald-300">won by {winnerName}</div>
+      )}
     </div>
   );
 }

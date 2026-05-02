@@ -45,7 +45,11 @@ Deno.serve(async (req) => {
   const skipped: Array<{ game_id: string; reason: string }> = [];
 
   for (const row of stale ?? []) {
-    const result = await sweepOne(admin, row.id);
+    // Snapshot the seat + deadline at scan time. sweepOne re-validates against
+    // these so it can detect that another worker (or a client-fired
+    // enforce-timeout) already advanced the seat — guards against double-
+    // increments on the next seat when sweeps race.
+    const result = await sweepOne(admin, row.id, row.current_seat, row.turn_deadline);
     if (result.acted) acted.push(row.id);
     else skipped.push({ game_id: row.id, reason: result.reason });
   }
@@ -56,12 +60,25 @@ Deno.serve(async (req) => {
 async function sweepOne(
   admin: ReturnType<typeof adminClient>,
   gameId: string,
+  expectedSeat: number | null,
+  expectedDeadline: string | null,
 ): Promise<{ acted: boolean; reason: string }> {
   const game = await loadGame(admin, gameId);
   if (!game) return { acted: false, reason: 'no_game' };
   if (game.status !== 'playing') return { acted: false, reason: 'not_playing' };
   if (game.current_seat === null) return { acted: false, reason: 'no_current_seat' };
   if (!game.turn_deadline) return { acted: false, reason: 'no_deadline' };
+
+  // State must still match what we saw during scan. If another worker or a
+  // client-fired enforce-timeout already advanced the seat or refreshed the
+  // deadline, bail out — otherwise we'd punish whoever happens to be the
+  // current_seat right now even though their clock isn't actually expired.
+  if (game.current_seat !== expectedSeat) {
+    return { acted: false, reason: 'seat_moved' };
+  }
+  if (expectedDeadline === null || game.turn_deadline !== expectedDeadline) {
+    return { acted: false, reason: 'deadline_moved' };
+  }
   if (Date.parse(game.turn_deadline) > Date.now() - SWEEP_BUFFER_SECONDS * 1000) {
     return { acted: false, reason: 'within_buffer' };
   }
