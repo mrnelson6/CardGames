@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { supabase } from '../../../lib/supabase';
 import { subscribeWithReconnect } from '../../../lib/realtime';
 import { useAuth } from '../../../lib/auth';
@@ -483,20 +484,36 @@ export function EuchreGamePage() {
                   {myCards.length === 0 ? (
                     <span className="text-xs text-slate-500 italic">empty</span>
                   ) : (
-                    myCards.map((c) => (
-                      <CardButton
-                        key={c}
-                        card={c}
-                        legal={phase === 'play' ? legalForMe.includes(c) : true}
-                        onClick={
-                          phase === 'play' && isMyTurn && legalForMe.includes(c)
-                            ? () => onPlay(c)()
-                            : phase === 'discard' && isMyTurn
-                            ? () => onDiscard(c)()
-                            : undefined
-                        }
-                      />
-                    ))
+                    <AnimatePresence>
+                      {myCards.map((c) => (
+                        <motion.div
+                          key={c}
+                          layout
+                          layoutId={`card-${c}`}
+                          // Shared layoutId with the trick area: when this
+                          // card gets played, framer-motion animates the
+                          // same motion element flying from your hand to
+                          // the table center. exit fires only when the card
+                          // is discarded (no matching layoutId destination).
+                          initial={{ opacity: 0, scale: 0.85 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.85, y: -28 }}
+                          transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                        >
+                          <CardButton
+                            card={c}
+                            legal={phase === 'play' ? legalForMe.includes(c) : true}
+                            onClick={
+                              phase === 'play' && isMyTurn && legalForMe.includes(c)
+                                ? () => onPlay(c)()
+                                : phase === 'discard' && isMyTurn
+                                ? () => onDiscard(c)()
+                                : undefined
+                            }
+                          />
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
                   )}
                 </div>
               ) : (
@@ -546,9 +563,15 @@ export function EuchreGamePage() {
               recentTrick && recentTrick.handNumber === eu.hand_number ? recentTrick : null
             }
           />
-          {eu.upcard && eu.upcard_status !== 'taken' && (
-            <UpcardDisplay card={eu.upcard} status={eu.upcard_status ?? 'face_up'} />
-          )}
+          <AnimatePresence>
+            {eu.upcard && eu.upcard_status !== 'taken' && (
+              <UpcardDisplay
+                key={eu.upcard}
+                card={eu.upcard}
+                status={eu.upcard_status ?? 'face_up'}
+              />
+            )}
+          </AnimatePresence>
           </div>
         </div>
       </div>
@@ -644,25 +667,58 @@ function TrickArea({
     2: 'absolute top-0 left-1/2 -translate-x-1/2',
     3: 'absolute right-0 top-1/2 -translate-y-1/2 -rotate-90',
   };
+  // Initial offset for opponent cards: they slide into the trick area FROM
+  // the direction of their seat. (Self cards use shared layoutId animation
+  // and don't need an initial offset.)
+  const ENTRY_OFFSET: Record<0 | 1 | 2 | 3, { x: number; y: number }> = {
+    0: { x: 0, y: 80 },   // from below (your hand)
+    1: { x: -80, y: 0 },  // from the left (west)
+    2: { x: 0, y: -80 },  // from above (north)
+    3: { x: 80, y: 0 },   // from the right (east)
+  };
 
   return (
     <div className="flex flex-col items-center gap-1">
       <div className="relative w-44 h-44">
-        {showing.map((p) => {
-          const offset = offsetFor(p.seat);
-          const isWinner = winnerSeat !== null && p.seat === winnerSeat;
-          const dim = isCompletedView && !isWinner;
-          return (
-            <div
-              key={p.seat}
-              className={`${POSITION_CLASS[offset]} ${
-                dim ? 'opacity-40 grayscale' : isWinner ? 'ring-2 ring-emerald-300 rounded' : ''
-              }`}
-            >
-              <CardButton card={p.card} legal />
-            </div>
-          );
-        })}
+        <AnimatePresence>
+          {showing.map((p) => {
+            const offset = offsetFor(p.seat);
+            const isSelf = offset === 0;
+            const isWinner = winnerSeat !== null && p.seat === winnerSeat;
+            const dim = isCompletedView && !isWinner;
+            const wrapperClass = `${POSITION_CLASS[offset]} ${
+              dim ? 'opacity-40 grayscale' : isWinner ? 'ring-2 ring-emerald-300 rounded' : ''
+            }`;
+            // When the trick is fully resolved (we have a known winner),
+            // exit toward the winner's direction — gives the visual that
+            // the winner is "collecting" the trick. Otherwise just fade.
+            const exitTarget =
+              winnerSeat !== null
+                ? { ...ENTRY_OFFSET[offsetFor(winnerSeat)], opacity: 0, scale: 0.7 }
+                : { opacity: 0, scale: 0.9 };
+            // Self uses shared layoutId so the same card flies from the
+            // hand into the trick. Opponents enter with a positional
+            // offset from their direction; we don't try to share layoutId
+            // with their face-down backs since the backs are anonymous.
+            const sharedProps = isSelf
+              ? { layoutId: `card-${p.card}`, exit: exitTarget }
+              : {
+                  initial: { ...ENTRY_OFFSET[offset], opacity: 0 },
+                  animate: { x: 0, y: 0, opacity: 1 },
+                  exit: exitTarget,
+                };
+            return (
+              <motion.div
+                key={p.seat}
+                className={wrapperClass}
+                transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                {...sharedProps}
+              >
+                <CardButton card={p.card} legal />
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
       </div>
       {winnerName && (
         <div className="text-xs text-emerald-300">won by {winnerName}</div>
@@ -673,10 +729,21 @@ function TrickArea({
 
 function UpcardDisplay({ card, status }: { card: Card; status: 'face_up' | 'turned_down' | 'taken' }) {
   return (
-    <div className="flex flex-col items-center">
+    <motion.div
+      // Shared layoutId with hand cards: when the dealer takes the upcard
+      // (order-up) and they're the viewer, the same motion element flies
+      // from this center spot into their hand. For an opponent dealer,
+      // there's no matching layoutId and AnimatePresence's exit fades it.
+      layoutId={`card-${card}`}
+      className="flex flex-col items-center"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.85 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+    >
       <span className="text-[10px] text-slate-300 uppercase">{status.replace('_', ' ')}</span>
       <CardButton card={card} legal={status === 'face_up'} />
-    </div>
+    </motion.div>
   );
 }
 
