@@ -118,6 +118,12 @@ export function Lobby() {
       navigate(`/games/euchre/room/${r.invite_code}`);
     });
 
+  const onCreateBotGame = () =>
+    wrap(async () => {
+      const r = await euchreApi.createBotGame();
+      navigate(`/games/euchre/g/${r.game_id}`);
+    });
+
   const onJoinRoom = (e: React.FormEvent) => {
     e.preventDefault();
     if (!joinCode.trim()) return;
@@ -202,6 +208,13 @@ export function Lobby() {
                   className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm disabled:opacity-50"
                 >
                   {busy ? 'Working…' : 'Create private room'}
+                </button>
+                <button
+                  onClick={onCreateBotGame}
+                  disabled={busy}
+                  className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm disabled:opacity-50"
+                >
+                  Play vs 3 bots
                 </button>
                 <Link to={`/games/${g.id}/hotseat`} className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm">
                   Hot-seat (practice)

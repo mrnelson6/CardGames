@@ -53,7 +53,7 @@ export interface PlayerRow {
 export interface HandRow {
   game_id: string;
   seat: number;
-  user_id: string;
+  user_id: string | null;
   cards: Card[];
   discarded_card: Card | null;
 }
@@ -145,15 +145,13 @@ export function buildDealForHand(
   handNumber: number,
 ): DealOutput {
   const { hands, upcard } = dealEuchre();
-  const handsRows: HandRow[] = players
-    .filter((p) => p.user_id !== null)
-    .map((p) => ({
-      game_id: gameId,
-      seat: p.seat,
-      user_id: p.user_id!,
-      cards: hands[p.seat as Seat],
-      discarded_card: null,
-    }));
+  const handsRows: HandRow[] = players.map((p) => ({
+    game_id: gameId,
+    seat: p.seat,
+    user_id: p.user_id, // null for bots — RLS hides bot hands from humans
+    cards: hands[p.seat as Seat],
+    discarded_card: null,
+  }));
   const firstSeat = ((dealer + 1) % 4) as Seat;
   return {
     hands: handsRows,

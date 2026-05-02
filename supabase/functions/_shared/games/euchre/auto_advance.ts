@@ -8,6 +8,12 @@ import { executeBotMove } from './bot_action.ts';
 import { loadEuchreState, loadGame, loadPlayers } from './state.ts';
 
 const MAX_BOT_STEPS = 25;
+// Randomized pause before each bot move. Long enough to feel like the bot is
+// "thinking" but short enough that 3 consecutive bots don't drag forever.
+// The HTTP call blocks for the duration; Realtime delivers each move to the
+// client as it commits so the human's UI animates naturally.
+const BOT_DELAY_MIN_MS = 700;
+const BOT_DELAY_MAX_MS = 1200;
 
 export async function autoAdvanceBots(
   admin: SupabaseClient,
@@ -23,6 +29,9 @@ export async function autoAdvanceBots(
 
     const eu = await loadEuchreState(admin, gameId);
     if (!eu) return;
+
+    const delay = BOT_DELAY_MIN_MS + Math.random() * (BOT_DELAY_MAX_MS - BOT_DELAY_MIN_MS);
+    await new Promise((resolve) => setTimeout(resolve, delay));
 
     const result = await executeBotMove(admin, game, eu, players, game.current_seat as Seat);
     if ('error' in result) {

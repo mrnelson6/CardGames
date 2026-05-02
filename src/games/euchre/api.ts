@@ -74,4 +74,5 @@ export const euchreApi = {
     ),
   resumeControl: (game_id: string) =>
     invoke<{ ok: true; was_bot: boolean }>('resume-control', { game_id }),
+  createBotGame: () => invoke<{ game_id: string }>('create-bot-game', {}),
 };
