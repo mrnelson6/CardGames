@@ -548,11 +548,13 @@ export function EuchreGamePage() {
           )}
           <div className="relative z-10 flex flex-col items-center gap-2">
           <TrickArea
-            // Only show live plays when the server says a trick is active
-            // — guards against stale Realtime callbacks repopulating the
-            // plays state with cards from the previous trick after we've
-            // already advanced to a new hand.
-            plays={eu.current_trick_id ? plays : []}
+            // Pass `plays` directly. Don't gate on eu.current_trick_id:
+            // doing so creates an empty-trick intermediate render
+            // between the moment the server nulls current_trick_id and
+            // the moment our async snapshot fetch lands. That gap was
+            // showing as "trick area empty + winner seat already
+            // highlighted" — the visible flicker.
+            plays={plays}
             mySeat={mySeat}
             usernames={usernames}
             players={players}
