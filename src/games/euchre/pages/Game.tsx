@@ -644,11 +644,8 @@ function TrickArea({
   players: GamePlayerRow[];
   completed: { plays: TrickPlayRow[]; winnerSeat: number | null } | null;
 }) {
-  if (plays.length === 0 && !completed) {
-    return <div className="text-xs text-slate-500 italic">— trick —</div>;
-  }
-  const showing = plays.length > 0 ? plays : completed!.plays;
-  const winnerSeat = plays.length > 0 ? null : completed!.winnerSeat;
+  const showing = plays.length > 0 ? plays : completed?.plays ?? [];
+  const winnerSeat = plays.length > 0 ? null : completed?.winnerSeat ?? null;
   const isCompletedView = plays.length === 0 && !!completed;
   const winnerName = (() => {
     if (winnerSeat === null) return null;
@@ -710,9 +707,9 @@ function TrickArea({
           })}
         </AnimatePresence>
       </div>
-      {winnerName && (
-        <div className="text-xs text-emerald-300">won by {winnerName}</div>
-      )}
+      <div className="text-xs text-emerald-300 h-4">
+        {winnerName ? `won by ${winnerName}` : ''}
+      </div>
     </div>
   );
 }
