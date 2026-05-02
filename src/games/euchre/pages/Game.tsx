@@ -311,7 +311,11 @@ export function EuchreGamePage() {
   const isMyTurn = mySeat !== null && game.current_seat === mySeat;
 
   const myCards = hand?.cards ?? [];
-  const ledCard = plays[0]?.card ?? null;
+  // Belt-and-suspenders: ledCard must come from the *currently active*
+  // trick. If the server says no trick is open (current_trick_id null —
+  // i.e., we're about to lead), force ledCard=null so legalForMe can't
+  // accidentally inherit a stale lead from the previous trick or hand.
+  const ledCard = eu.current_trick_id ? plays[0]?.card ?? null : null;
   const trump = eu.trump_suit;
   const legalForMe: Card[] =
     phase === 'play' && trump !== null ? legalPlays(myCards, ledCard, trump) : [];
