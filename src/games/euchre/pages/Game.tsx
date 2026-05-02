@@ -504,9 +504,10 @@ export function EuchreGamePage() {
           {trump && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
               <span
-                className={`text-[10rem] leading-none ${
-                  trump === 'D' || trump === 'H' ? 'text-rose-500/15' : 'text-slate-100/15'
+                className={`leading-none ${
+                  trump === 'D' || trump === 'H' ? 'text-rose-500/35' : 'text-slate-100/30'
                 }`}
+                style={{ fontSize: 'min(28vh, 22vw)' }}
               >
                 {SUIT_LABEL[trump]}
               </span>
