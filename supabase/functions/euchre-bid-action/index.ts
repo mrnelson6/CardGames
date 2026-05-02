@@ -225,7 +225,9 @@ async function acceptBid(
     return json({ ok: true, phase: 'discard', trump: bid.trump, dealer });
   }
 
-  // call_trump path: go straight to play. Upcard stays "turned_down" but is irrelevant.
+  // call_trump path: go straight to play. Clear the leftover upcard —
+  // playCard treats non-null upcard as "still in discard phase" and
+  // rejects, which would freeze the game on every play attempt.
   const first = nextSeat(dealer, bid.alone);
   const { error: euErr } = await admin
     .from('euchre_games')
@@ -233,6 +235,7 @@ async function acceptBid(
       trump_suit: bid.trump,
       maker_seat: bid.maker,
       alone_seat: bid.alone,
+      upcard: null,
     })
     .eq('game_id', gameId);
   if (euErr) return fail(500, 'db_eu_update', euErr.message);

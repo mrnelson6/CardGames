@@ -164,6 +164,10 @@ export async function acceptBid(
       trump_suit: bid.trump,
       maker_seat: bid.maker,
       alone_seat: bid.alone,
+      // Clear the leftover turned-down upcard. playCard refuses to act
+      // when upcard is non-null (it's the discard-phase signal); without
+      // this, every play attempt after a round-2 call_trump fails.
+      upcard: null,
     })
     .eq('game_id', gameId);
   if (euUpd.error) return { error: euUpd.error.message };
