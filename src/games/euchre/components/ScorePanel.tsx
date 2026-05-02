@@ -3,17 +3,20 @@ interface ScorePanelProps {
   team1: number;
   trumpSuit?: string;
   makerTeam?: 0 | 1;
+  myTeam?: 0 | 1;
 }
 
-export function ScorePanel({ team0, team1, trumpSuit, makerTeam }: ScorePanelProps) {
+export function ScorePanel({ team0, team1, trumpSuit, makerTeam, myTeam }: ScorePanelProps) {
+  const team0Label = myTeam === 0 ? 'Your team' : myTeam === 1 ? 'Other team' : 'Team 0';
+  const team1Label = myTeam === 1 ? 'Your team' : myTeam === 0 ? 'Other team' : 'Team 1';
   return (
     <div className="rounded bg-slate-800/90 p-3 text-sm space-y-1">
       <div className="flex justify-between gap-4">
-        <span>Us (0/2)</span>
+        <span>{team0Label}</span>
         <span className="font-bold">{team0}</span>
       </div>
       <div className="flex justify-between gap-4">
-        <span>Them (1/3)</span>
+        <span>{team1Label}</span>
         <span className="font-bold">{team1}</span>
       </div>
       {trumpSuit && (

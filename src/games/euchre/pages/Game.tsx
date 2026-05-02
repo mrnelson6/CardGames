@@ -41,11 +41,13 @@ export function EuchreGamePage() {
   const [hand, setHand] = useState<GameHandRow | null>(null);
   const [plays, setPlays] = useState<TrickPlayRow[]>([]);
   // Snapshot of the most-recently-completed trick — kept on screen for ~2.5s
-  // after current_trick_id clears so players can see who won. Cleared on
-  // hand boundary so a stale trick from hand N doesn't bleed into hand N+1.
+  // after current_trick_id clears so players can see who won. We stamp the
+  // hand number onto the snapshot so the renderer can drop it the instant
+  // the hand advances, without relying on Realtime event ordering.
   const [recentTrick, setRecentTrick] = useState<{
     plays: TrickPlayRow[];
     winnerSeat: number | null;
+    handNumber: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -155,14 +157,18 @@ export function EuchreGamePage() {
   useEffect(() => {
     if (!eu?.current_trick_id) {
       // Trick just ended — snapshot what we had so the cards stay visible
-      // for a beat with the winner highlighted, then clear.
+      // for a beat with the winner highlighted, then clear. Tag the
+      // snapshot with the hand it belonged to so we can drop it as soon
+      // as the hand advances.
+      const trump = eu?.trump_suit;
+      const handNumber = eu?.hand_number;
       setPlays((prev) => {
-        if (prev.length > 0 && eu?.trump_suit) {
+        if (prev.length > 0 && trump && handNumber !== undefined) {
           const winnerSeat = trickWinner(
             prev.map((p) => ({ seat: p.seat, card: p.card })),
-            eu.trump_suit,
+            trump,
           );
-          setRecentTrick({ plays: prev, winnerSeat });
+          setRecentTrick({ plays: prev, winnerSeat, handNumber });
         }
         return [];
       });
@@ -204,12 +210,6 @@ export function EuchreGamePage() {
     const t = setTimeout(() => setRecentTrick(null), 2500);
     return () => clearTimeout(t);
   }, [recentTrick]);
-
-  // Hand boundary: if the hand_number changes (or the upcard reappears for a
-  // fresh deal) drop any leftover trick visualization immediately.
-  useEffect(() => {
-    setRecentTrick(null);
-  }, [eu?.hand_number, eu?.upcard_status === 'face_up']);
 
   // Resolve usernames once.
   useEffect(() => {
@@ -414,7 +414,12 @@ export function EuchreGamePage() {
             mySeat={mySeat}
             usernames={usernames}
             players={players}
-            completed={recentTrick}
+            // Drop the held snapshot the instant the hand advances —
+            // prevents the previous hand's last trick from ghosting in
+            // when the new face-up card appears.
+            completed={
+              recentTrick && recentTrick.handNumber === eu.hand_number ? recentTrick : null
+            }
           />
           {eu.upcard && eu.upcard_status !== 'taken' && (
             <UpcardDisplay card={eu.upcard} status={eu.upcard_status ?? 'face_up'} />
@@ -459,6 +464,7 @@ export function EuchreGamePage() {
           team1={game.team1_score}
           trumpSuit={trump ? SUIT_LABEL[trump] : undefined}
           makerTeam={eu.maker_seat !== null ? teamOf(eu.maker_seat) : undefined}
+          myTeam={mySeat !== null ? teamOf(mySeat) : undefined}
         />
       </div>
     </div>
