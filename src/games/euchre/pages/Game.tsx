@@ -174,42 +174,49 @@ export function EuchreGamePage() {
       prevTrickIdRef.current = null;
       const trump = eu?.trump_suit;
       const handNumber = eu?.hand_number;
-      setPlays([]);
-      if (completedTrickId && trump && handNumber !== undefined) {
-        // Fetch authoritative play set from DB so we capture the 4th
-        // (or 3rd, if alone) card even when Realtime hasn't delivered
-        // the INSERT event by the time we reach this effect. Also pull
-        // the trick row so we know its trick_number for the longer
-        // hand-end hold.
-        let cancelled = false;
-        (async () => {
-          const [playsResp, trickResp] = await Promise.all([
-            supabase
-              .from('trick_plays')
-              .select('*')
-              .eq('trick_id', completedTrickId)
-              .order('played_at'),
-            supabase
-              .from('tricks')
-              .select('trick_number')
-              .eq('id', completedTrickId)
-              .maybeSingle(),
-          ]);
-          if (cancelled) return;
-          const allPlays = (playsResp.data ?? []) as TrickPlayRow[];
-          const trickNumber =
-            (trickResp.data as { trick_number: number } | null)?.trick_number ?? null;
-          if (allPlays.length > 0) {
-            const winnerSeat = trickWinner(
-              allPlays.map((p) => ({ seat: p.seat, card: p.card })),
-              trump,
-            );
-            setRecentTrick({ plays: allPlays, winnerSeat, handNumber, trickNumber });
-          }
-        })();
-        return () => { cancelled = true; };
+
+      if (!completedTrickId || !trump || handNumber === undefined) {
+        // No prior trick to snapshot — just clear.
+        setPlays([]);
+        return;
       }
-      return;
+
+      // Fetch authoritative play set from DB (sidesteps the Realtime
+      // ordering race) AND the trick row's trick_number for the
+      // longer hand-end hold. Both setRecentTrick and setPlays([])
+      // run in the SAME async tick → React batches them into a
+      // single render, so AnimatePresence sees the trick area
+      // transition directly from `plays`-source to `recentTrick`-
+      // source with the same keys, not through an empty intermediate
+      // render that would unmount and remount every card.
+      let cancelled = false;
+      (async () => {
+        const [playsResp, trickResp] = await Promise.all([
+          supabase
+            .from('trick_plays')
+            .select('*')
+            .eq('trick_id', completedTrickId)
+            .order('played_at'),
+          supabase
+            .from('tricks')
+            .select('trick_number')
+            .eq('id', completedTrickId)
+            .maybeSingle(),
+        ]);
+        if (cancelled) return;
+        const allPlays = (playsResp.data ?? []) as TrickPlayRow[];
+        const trickNumber =
+          (trickResp.data as { trick_number: number } | null)?.trick_number ?? null;
+        if (allPlays.length > 0) {
+          const winnerSeat = trickWinner(
+            allPlays.map((p) => ({ seat: p.seat, card: p.card })),
+            trump,
+          );
+          setRecentTrick({ plays: allPlays, winnerSeat, handNumber, trickNumber });
+        }
+        setPlays([]);
+      })();
+      return () => { cancelled = true; };
     }
     const trickId = eu.current_trick_id;
     prevTrickIdRef.current = trickId;
