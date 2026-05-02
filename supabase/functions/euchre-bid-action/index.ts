@@ -24,6 +24,7 @@ import {
   loadGame,
   loadPlayers,
 } from '../_shared/games/euchre/state.ts';
+import { autoAdvanceBots } from '../_shared/games/euchre/auto_advance.ts';
 
 interface Body {
   game_id: string;
@@ -139,6 +140,7 @@ async function handleBidProgression(
       action_type: 'pass',
       payload: { round, advanced_to_round_2: true },
     });
+    await autoAdvanceBots(admin, gameId);
     return json({ ok: true, advanced: 'round_2', next_seat: next });
   }
 
@@ -156,6 +158,7 @@ async function handleBidProgression(
     action_type: 'pass',
     payload: { round },
   });
+  await autoAdvanceBots(admin, gameId);
   return json({ ok: true, next_seat: next });
 }
 
@@ -218,6 +221,7 @@ async function acceptBid(
       action_type: 'order_up',
       payload: { trump: bid.trump, alone: bid.alone !== null },
     });
+    await autoAdvanceBots(admin, gameId);
     return json({ ok: true, phase: 'discard', trump: bid.trump, dealer });
   }
 
@@ -245,5 +249,6 @@ async function acceptBid(
     action_type: 'call_trump',
     payload: { trump: bid.trump, alone: bid.alone !== null },
   });
+  await autoAdvanceBots(admin, gameId);
   return json({ ok: true, phase: 'play', trump: bid.trump, current_seat: first });
 }

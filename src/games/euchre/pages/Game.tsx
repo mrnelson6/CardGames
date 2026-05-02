@@ -279,7 +279,19 @@ export function EuchreGamePage() {
         </div>
         <div className="flex items-center gap-3">
           {game.turn_deadline && phase !== 'finished' && (
-            <TurnTimer deadline={game.turn_deadline} serverOffsetMs={serverOffsetMs} />
+            <TurnTimer
+              deadline={game.turn_deadline}
+              serverOffsetMs={serverOffsetMs}
+              onExpire={(deadline) => {
+                if (game.current_seat === null) return;
+                euchreApi
+                  .enforceTimeout(game.id, game.current_seat, deadline)
+                  .catch(() => {
+                    // Swallow — multiple clients may race; only one wins, the
+                    // rest get acted=false. Realtime delivers the new state.
+                  });
+              }}
+            />
           )}
           <Link to="/" className="text-sm hover:underline">← Lobby</Link>
         </div>

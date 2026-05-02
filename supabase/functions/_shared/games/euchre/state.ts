@@ -22,6 +22,7 @@ export interface FullGame {
   id: string;
   status: 'lobby' | 'playing' | 'finished' | 'abandoned';
   game: string;
+  mode: string | null;
   current_seat: number | null;
   team0_score: number;
   team1_score: number;

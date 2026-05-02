@@ -17,6 +17,7 @@ import {
   loadGame,
   loadPlayers,
 } from '../_shared/games/euchre/state.ts';
+import { autoAdvanceBots } from '../_shared/games/euchre/auto_advance.ts';
 import type { Seat } from '../_shared/games/euchre/euchre.ts';
 
 interface Body {
@@ -163,6 +164,10 @@ Deno.serve(async (req) => {
       action_type: 'deal_hand',
       payload: { hand_number: 1, dealer_seat: euState.dealer_seat },
     });
+
+    // Initial deal: if any seats are bots (shouldn't be at game start, but
+    // safe), advance through them.
+    await autoAdvanceBots(admin, game.id);
   }
 
   // Fetch authoritative status (whether we won the race or not).

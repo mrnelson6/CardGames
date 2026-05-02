@@ -31,6 +31,8 @@ import {
   loadGame,
   loadPlayers,
 } from '../_shared/games/euchre/state.ts';
+import { autoAdvanceBots } from '../_shared/games/euchre/auto_advance.ts';
+import { applyEloOnGameEnd } from '../_shared/games/euchre/elo.ts';
 
 interface Body {
   game_id: string;
@@ -166,6 +168,7 @@ Deno.serve(async (req) => {
       .update({ current_seat: next, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
       .eq('id', body.game_id);
     if (gErr) return fail(500, 'db_game_update', gErr.message);
+    await autoAdvanceBots(admin, body.game_id);
     return json({ ok: true, phase: 'play', current_seat: next });
   }
 
@@ -201,11 +204,14 @@ Deno.serve(async (req) => {
       .update({ current_seat: winner, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
       .eq('id', body.game_id);
     if (gErr) return fail(500, 'db_game_update', gErr.message);
+    await autoAdvanceBots(admin, body.game_id);
     return json({ ok: true, phase: 'play', current_seat: winner, trick_winner: winner });
   }
 
   // Hand complete — score it.
-  return await resolveHand(admin, body.game_id, eu.hand_number, eu.maker_seat as Seat, alone, players, eu.dealer_seat as Seat);
+  const result = await resolveHand(admin, body.game_id, eu.hand_number, eu.maker_seat as Seat, alone, players, eu.dealer_seat as Seat);
+  await autoAdvanceBots(admin, body.game_id);
+  return result;
 });
 
 async function resolveHand(
@@ -270,6 +276,10 @@ async function resolveHand(
       action_type: 'game_complete',
       payload: { winning_team: winningTeam, team0, team1 },
     });
+
+    // ELO update (no-op for unranked private rooms).
+    const fresh = await loadGame(admin, gameId);
+    if (fresh) await applyEloOnGameEnd(admin, fresh, players, winningTeam as 0 | 1);
 
     return json({ ok: true, phase: 'finished', winning_team: winningTeam, team0, team1 });
   }

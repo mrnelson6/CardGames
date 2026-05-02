@@ -44,4 +44,15 @@ export const euchreApi = {
     invoke<{ ok: true }>('euchre-discard', { game_id, card }),
   playCard: (game_id: string, card: Card) =>
     invoke<{ ok: true }>('euchre-play-card', { game_id, card }),
+  enforceTimeout: (game_id: string, expected_seat: number, expected_deadline: string) =>
+    invoke<{ ok: true; acted: boolean; reason?: string }>('enforce-timeout', {
+      game_id,
+      expected_seat,
+      expected_deadline,
+    }),
+  enqueueMatchmaking: (mode: 'solo' | 'duo') =>
+    invoke<{ ok: true; rating: number; band: number }>('enqueue-mm', {
+      game: 'euchre',
+      mode,
+    }),
 };

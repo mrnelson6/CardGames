@@ -11,6 +11,7 @@ export interface GameRow {
   id: string;
   status: GameStatus;
   game: string;
+  mode: string | null;
   current_seat: number | null;
   team0_score: number;
   team1_score: number;

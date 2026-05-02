@@ -23,6 +23,7 @@ import {
   loadGame,
   loadPlayers,
 } from '../_shared/games/euchre/state.ts';
+import { autoAdvanceBots } from '../_shared/games/euchre/auto_advance.ts';
 
 interface Body {
   game_id: string;
@@ -103,5 +104,6 @@ Deno.serve(async (req) => {
     payload: {},
   });
 
+  await autoAdvanceBots(admin, body.game_id);
   return json({ ok: true, phase: 'play', current_seat: first });
 });
