@@ -179,29 +179,24 @@ export function EuchreGamePage() {
     }
     const trickId = eu.current_trick_id;
     let cancelled = false;
-    (async () => {
-      const p = await supabase
+    const fetchPlays = async () => {
+      if (cancelled) return;
+      const { data } = await supabase
         .from('trick_plays')
         .select('*')
         .eq('trick_id', trickId)
         .order('played_at');
       if (cancelled) return;
-      setPlays((p.data ?? []) as TrickPlayRow[]);
-    })();
+      setPlays((data ?? []) as TrickPlayRow[]);
+    };
+    fetchPlays();
     const unsub = subscribeWithReconnect({
       channel: `plays-${trickId}`,
       configure: (ch) =>
         ch.on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'trick_plays', filter: `trick_id=eq.${trickId}` },
-          () => {
-            supabase
-              .from('trick_plays')
-              .select('*')
-              .eq('trick_id', trickId)
-              .order('played_at')
-              .then(({ data }) => setPlays((data ?? []) as TrickPlayRow[]));
-          },
+          () => fetchPlays(),
         ),
     });
     return () => { cancelled = true; unsub(); };
@@ -451,7 +446,11 @@ export function EuchreGamePage() {
 
         <div className="col-start-2 row-start-2 flex flex-col items-center justify-center gap-2">
           <TrickArea
-            plays={plays}
+            // Only show live plays when the server says a trick is active
+            // — guards against stale Realtime callbacks repopulating the
+            // plays state with cards from the previous trick after we've
+            // already advanced to a new hand.
+            plays={eu.current_trick_id ? plays : []}
             mySeat={mySeat}
             usernames={usernames}
             players={players}
