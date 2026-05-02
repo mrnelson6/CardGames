@@ -657,65 +657,71 @@ function TrickArea({
   })();
 
   // Layout each played card in front of the seat that played it, relative to
-  // the viewer (who sits at south). Side-seat cards rotate 90° so they appear
-  // dealt by the side player.
+  // the viewer (who sits at south). Positioning is done via a 3x3 grid (one
+  // cell per cardinal direction) — no CSS translate/rotate on the motion
+  // element itself, so framer-motion's layout animation doesn't fight a
+  // utility transform when measuring the source/destination boxes. Rotation
+  // is applied as a motion property instead.
   const offsetFor = (seat: number): 0 | 1 | 2 | 3 =>
     (mySeat === null ? seat : (seat - mySeat + 4) % 4) as 0 | 1 | 2 | 3;
-  const POSITION_CLASS: Record<0 | 1 | 2 | 3, string> = {
-    0: 'absolute bottom-0 left-1/2 -translate-x-1/2',
-    1: 'absolute left-0 top-1/2 -translate-y-1/2 rotate-90',
-    2: 'absolute top-0 left-1/2 -translate-x-1/2',
-    3: 'absolute right-0 top-1/2 -translate-y-1/2 -rotate-90',
+  const CELL_CLASS: Record<0 | 1 | 2 | 3, string> = {
+    0: 'col-start-2 row-start-3 flex items-center justify-center',
+    1: 'col-start-1 row-start-2 flex items-center justify-center',
+    2: 'col-start-2 row-start-1 flex items-center justify-center',
+    3: 'col-start-3 row-start-2 flex items-center justify-center',
   };
-  // Initial offset for opponent cards: they slide into the trick area FROM
-  // the direction of their seat. (Self cards use shared layoutId animation
-  // and don't need an initial offset.)
+  const ROTATION: Record<0 | 1 | 2 | 3, number> = { 0: 0, 1: 90, 2: 0, 3: -90 };
+  // Initial offset for opponent cards (they slide into the trick area FROM
+  // the direction of their seat) and exit offset (cards fly toward the
+  // winner's seat when the trick resolves).
   const ENTRY_OFFSET: Record<0 | 1 | 2 | 3, { x: number; y: number }> = {
-    0: { x: 0, y: 80 },   // from below (your hand)
-    1: { x: -80, y: 0 },  // from the left (west)
-    2: { x: 0, y: -80 },  // from above (north)
-    3: { x: 80, y: 0 },   // from the right (east)
+    0: { x: 0, y: 80 },
+    1: { x: -80, y: 0 },
+    2: { x: 0, y: -80 },
+    3: { x: 80, y: 0 },
   };
 
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="relative w-44 h-44">
+      <div className="grid grid-cols-3 grid-rows-3 w-48 h-48">
         <AnimatePresence>
           {showing.map((p) => {
             const offset = offsetFor(p.seat);
             const isSelf = offset === 0;
             const isWinner = winnerSeat !== null && p.seat === winnerSeat;
             const dim = isCompletedView && !isWinner;
-            const wrapperClass = `${POSITION_CLASS[offset]} ${
-              dim ? 'opacity-40 grayscale' : isWinner ? 'ring-2 ring-emerald-300 rounded' : ''
-            }`;
-            // When the trick is fully resolved (we have a known winner),
-            // exit toward the winner's direction — gives the visual that
-            // the winner is "collecting" the trick. Otherwise just fade.
+            const rotation = ROTATION[offset];
             const exitTarget =
               winnerSeat !== null
-                ? { ...ENTRY_OFFSET[offsetFor(winnerSeat)], opacity: 0, scale: 0.7 }
-                : { opacity: 0, scale: 0.9 };
-            // Self uses shared layoutId so the same card flies from the
-            // hand into the trick. Opponents enter with a positional
-            // offset from their direction; we don't try to share layoutId
-            // with their face-down backs since the backs are anonymous.
-            const sharedProps = isSelf
-              ? { layoutId: `card-${p.card}`, exit: exitTarget }
+                ? { ...ENTRY_OFFSET[offsetFor(winnerSeat)], opacity: 0, scale: 0.7, rotate: rotation }
+                : { opacity: 0, scale: 0.9, rotate: rotation };
+            const motionProps = isSelf
+              ? {
+                  layoutId: `card-${p.card}`,
+                  animate: { rotate: rotation },
+                  exit: exitTarget,
+                }
               : {
-                  initial: { ...ENTRY_OFFSET[offset], opacity: 0 },
-                  animate: { x: 0, y: 0, opacity: 1 },
+                  initial: { ...ENTRY_OFFSET[offset], opacity: 0, rotate: rotation },
+                  animate: { x: 0, y: 0, opacity: 1, rotate: rotation },
                   exit: exitTarget,
                 };
             return (
-              <motion.div
-                key={p.seat}
-                className={wrapperClass}
-                transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-                {...sharedProps}
-              >
-                <CardButton card={p.card} legal />
-              </motion.div>
+              <div key={p.seat} className={CELL_CLASS[offset]}>
+                <motion.div
+                  className={
+                    dim
+                      ? 'opacity-40 grayscale'
+                      : isWinner
+                      ? 'ring-2 ring-emerald-300 rounded'
+                      : ''
+                  }
+                  transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                  {...motionProps}
+                >
+                  <CardButton card={p.card} legal />
+                </motion.div>
+              </div>
             );
           })}
         </AnimatePresence>
