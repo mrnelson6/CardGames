@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { subscribeWithReconnect } from '../lib/realtime';
 import { useAuth } from '../lib/auth';
+import { euchreApi } from '../games/euchre/api';
 import type { ProfileRow } from '../lib/database.types';
 
 interface FriendRequest {
@@ -28,6 +29,11 @@ export function Friends() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [partyState, setPartyState] = useState<{
+    party_id: string;
+    is_leader: boolean;
+    member_count: number;
+  } | null>(null);
 
   // Initial load
   useEffect(() => {
@@ -45,6 +51,53 @@ export function Friends() {
       setFriends((fr.data ?? []) as Friendship[]);
     })();
     return () => { cancelled = true; };
+  }, [me]);
+
+  // Track caller's party so we can show "Invite" buttons.
+  useEffect(() => {
+    if (!me) return;
+    let cancelled = false;
+    const refreshParty = async () => {
+      const { data: membership } = await supabase
+        .from('party_members')
+        .select('party_id')
+        .eq('user_id', me)
+        .maybeSingle();
+      if (cancelled) return;
+      if (!membership) { setPartyState(null); return; }
+      const pid = (membership as { party_id: string }).party_id;
+      const { data: p } = await supabase
+        .from('parties')
+        .select('id, leader_id')
+        .eq('id', pid)
+        .maybeSingle();
+      const { data: members } = await supabase
+        .from('party_members')
+        .select('user_id')
+        .eq('party_id', pid);
+      if (cancelled || !p) return;
+      const partyRow = p as { id: string; leader_id: string };
+      setPartyState({
+        party_id: partyRow.id,
+        is_leader: partyRow.leader_id === me,
+        member_count: ((members ?? []) as unknown[]).length,
+      });
+    };
+    refreshParty();
+    const unsub = subscribeWithReconnect({
+      channel: `friends-party-${me}`,
+      configure: (ch) =>
+        ch.on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'party_members' },
+          refreshParty,
+        ).on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'parties' },
+          refreshParty,
+        ),
+    });
+    return () => { cancelled = true; unsub(); };
   }, [me]);
 
   // Realtime: friend_requests + friendships changes affecting me.
@@ -204,6 +257,21 @@ export function Friends() {
 
   const otherUserOf = (f: Friendship): string => (f.user_a === me ? f.user_b : f.user_a);
 
+  const inviteToParty = async (toUser: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await euchreApi.inviteToParty(toUser);
+      flash(r.already_member ? 'Already in your party.' : 'Invited!');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canInvite = partyState !== null && partyState.is_leader && partyState.member_count < 2;
+
   return (
     <div className="min-h-full p-6 max-w-2xl mx-auto">
       <header className="flex items-center justify-between mb-6">
@@ -310,13 +378,24 @@ export function Friends() {
                   className="flex items-center justify-between rounded border border-slate-700 bg-slate-800 px-3 py-2"
                 >
                   <span className="font-medium">{usernames.get(other) ?? other.slice(0, 8)}</span>
-                  <button
-                    onClick={() => removeRow('friendships', { user_a: f.user_a, user_b: f.user_b })}
-                    disabled={busy}
-                    className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1 text-sm"
-                  >
-                    Remove
-                  </button>
+                  <div className="flex gap-2">
+                    {canInvite && (
+                      <button
+                        onClick={() => inviteToParty(other)}
+                        disabled={busy}
+                        className="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-sm disabled:opacity-50"
+                      >
+                        Invite to party
+                      </button>
+                    )}
+                    <button
+                      onClick={() => removeRow('friendships', { user_a: f.user_a, user_b: f.user_b })}
+                      disabled={busy}
+                      className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1 text-sm"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </li>
               );
             })}
