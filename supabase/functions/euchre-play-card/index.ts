@@ -23,6 +23,7 @@ import {
   trickWinner,
 } from '../_shared/games/euchre/euchre.ts';
 import {
+  HAND_END_PAUSE_MS,
   TURN_SECONDS,
   buildDealForHand,
   deadlineNowPlus,
@@ -283,6 +284,10 @@ async function resolveHand(
 
     return json({ ok: true, phase: 'finished', winning_team: winningTeam, team0, team1 });
   }
+
+  // Hold the just-completed last trick on screen for a beat before the new
+  // face-up card replaces it.
+  await new Promise((r) => setTimeout(r, HAND_END_PAUSE_MS));
 
   // Deal next hand.
   const nextDealer = ((dealer + 1) % 4) as Seat;

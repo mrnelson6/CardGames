@@ -43,14 +43,16 @@ export function EuchreGamePage() {
   // Resolved tricks for the entire game; we filter by current hand_number
   // when rendering trick counts.
   const [resolvedTricks, setResolvedTricks] = useState<Array<{ id: string; hand_number: number; winner_seat: number | null }>>([]);
-  // Snapshot of the most-recently-completed trick — kept on screen for ~2.5s
-  // after current_trick_id clears so players can see who won. We stamp the
-  // hand number onto the snapshot so the renderer can drop it the instant
-  // the hand advances, without relying on Realtime event ordering.
+  // Snapshot of the most-recently-completed trick — kept on screen for a
+  // beat after current_trick_id clears so players can see who won. The
+  // trickNumber stamp lets us hold the 5th (last-of-hand) trick longer
+  // than tricks 1–4. The handNumber stamp lets us drop the snapshot the
+  // instant the hand advances, without relying on Realtime event ordering.
   const [recentTrick, setRecentTrick] = useState<{
     plays: TrickPlayRow[];
     winnerSeat: number | null;
     handNumber: number;
+    trickNumber: number | null;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -175,22 +177,33 @@ export function EuchreGamePage() {
       if (completedTrickId && trump && handNumber !== undefined) {
         // Fetch authoritative play set from DB so we capture the 4th
         // (or 3rd, if alone) card even when Realtime hasn't delivered
-        // the INSERT event by the time we reach this effect.
+        // the INSERT event by the time we reach this effect. Also pull
+        // the trick row so we know its trick_number for the longer
+        // hand-end hold.
         let cancelled = false;
         (async () => {
-          const { data } = await supabase
-            .from('trick_plays')
-            .select('*')
-            .eq('trick_id', completedTrickId)
-            .order('played_at');
+          const [playsResp, trickResp] = await Promise.all([
+            supabase
+              .from('trick_plays')
+              .select('*')
+              .eq('trick_id', completedTrickId)
+              .order('played_at'),
+            supabase
+              .from('tricks')
+              .select('trick_number')
+              .eq('id', completedTrickId)
+              .maybeSingle(),
+          ]);
           if (cancelled) return;
-          const allPlays = (data ?? []) as TrickPlayRow[];
+          const allPlays = (playsResp.data ?? []) as TrickPlayRow[];
+          const trickNumber =
+            (trickResp.data as { trick_number: number } | null)?.trick_number ?? null;
           if (allPlays.length > 0) {
             const winnerSeat = trickWinner(
               allPlays.map((p) => ({ seat: p.seat, card: p.card })),
               trump,
             );
-            setRecentTrick({ plays: allPlays, winnerSeat, handNumber });
+            setRecentTrick({ plays: allPlays, winnerSeat, handNumber, trickNumber });
           }
         })();
         return () => { cancelled = true; };
@@ -223,10 +236,13 @@ export function EuchreGamePage() {
     return () => { cancelled = true; unsub(); };
   }, [eu?.current_trick_id]);
 
-  // Auto-clear the recent-trick snapshot after a beat.
+  // Auto-clear the recent-trick snapshot after a beat. The 5th (last)
+  // trick of a hand holds twice as long so the result of the hand has
+  // a chance to land before the new face-up card replaces it.
   useEffect(() => {
     if (!recentTrick) return;
-    const t = setTimeout(() => setRecentTrick(null), 2500);
+    const duration = recentTrick.trickNumber === 5 ? 5000 : 2500;
+    const t = setTimeout(() => setRecentTrick(null), duration);
     return () => clearTimeout(t);
   }, [recentTrick]);
 

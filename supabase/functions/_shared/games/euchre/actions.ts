@@ -16,6 +16,7 @@ import {
   trickWinner,
 } from './euchre.ts';
 import {
+  HAND_END_PAUSE_MS,
   TURN_SECONDS,
   buildDealForHand,
   deadlineNowPlus,
@@ -451,6 +452,11 @@ async function resolveHandEnd(
 
     return { ok: true, phase: 'finished', current_seat: null };
   }
+
+  // Hold the just-completed last trick on screen for a beat before the new
+  // face-up card replaces it. Without this pause the new hand deals
+  // instantly and the held visualization disappears the moment it appears.
+  await new Promise((r) => setTimeout(r, HAND_END_PAUSE_MS));
 
   // Deal next hand.
   const nextDealer = ((dealer + 1) % 4) as Seat;

@@ -17,6 +17,10 @@ import {
 } from './euchre.ts';
 
 export const TURN_SECONDS = 45;
+// Server pauses this long after a hand resolves before dealing the new hand,
+// so the just-completed final trick stays on screen long enough to see who
+// won (the client snapshot only persists while eu.hand_number hasn't changed).
+export const HAND_END_PAUSE_MS = 5000;
 
 export interface FullGame {
   id: string;
