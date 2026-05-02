@@ -13,6 +13,11 @@ export const supabase = createClient<Database>(url, anonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
+    // PKCE puts the auth code in `?code=` instead of the URL hash. Our
+    // HashRouter reads the hash for routing; an implicit-flow callback like
+    // `#access_token=...` gets consumed as a (non-matching) route before
+    // supabase-js can parse it, breaking magic-link sign-in.
+    flowType: 'pkce',
   },
   realtime: {
     params: { eventsPerSecond: 10 },
