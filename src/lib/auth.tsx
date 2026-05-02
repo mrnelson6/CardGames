@@ -14,17 +14,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ session: null, loading: true });
 
   useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (mounted) setState({ session: data.session, loading: false });
-    });
+    // Rely solely on onAuthStateChange for the initial state. supabase-js
+    // fires INITIAL_SESSION after it has finished recovering from storage
+    // AND parsing any auth tokens out of the URL. Calling getSession()
+    // synchronously here would race ahead of the URL parse — getSession
+    // returns null, we flip loading=false, RequireAuth redirects to
+    // /login, and the redirect strips the magic-link hash off the URL
+    // before supabase-js can read it. INITIAL_SESSION lets us hold the
+    // "loading…" screen until the URL has been fully consumed.
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setState({ session, loading: false });
     });
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;
