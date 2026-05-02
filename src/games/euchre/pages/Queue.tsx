@@ -19,15 +19,11 @@ export function EuchreQueuePage() {
 
   useEffect(() => {
     if (!session) return;
-    if (mode === 'duo') {
-      setError('Duo queue lands once parties are wired (Phase 5).');
-      return;
-    }
     let cancelled = false;
     (async () => {
       try {
         const r = await euchreApi.enqueueMatchmaking(mode);
-        if (!cancelled) setEnqueued({ rating: r.rating, at: Date.now() });
+        if (!cancelled) setEnqueued({ rating: r.rating ?? 0, at: Date.now() });
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }

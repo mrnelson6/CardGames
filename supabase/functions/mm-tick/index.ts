@@ -16,7 +16,10 @@ interface QueueEntry {
   user_id: string;
   game: string;
   mode: string;
+  party_id: string | null;
+  party_size: number;
   rating: number;
+  party_avg_rating: number;
   band: number;
   enqueued_at: string;
 }
@@ -42,7 +45,7 @@ Deno.serve(async (req) => {
 
   const { data: rows, error: qErr } = await admin
     .from('mm_queue')
-    .select('user_id, game, mode, rating, band, enqueued_at')
+    .select('user_id, game, mode, party_id, party_size, rating, party_avg_rating, band, enqueued_at')
     .order('enqueued_at');
   if (qErr) return fail(500, 'db_scan', qErr.message);
 
@@ -59,9 +62,9 @@ Deno.serve(async (req) => {
 
   for (const [key, group] of groups.entries()) {
     const [game, mode] = key.split(':');
-    if (group.length < 4 || mode !== 'solo' || game !== 'euchre') continue;
+    if (game !== 'euchre') continue;
 
-    // Expand bands by wait time (apply locally; we'll persist after pairing).
+    // Expand bands by wait time.
     const now = Date.now();
     for (const e of group) {
       const waited = (now - new Date(e.enqueued_at).getTime()) / 1000;
@@ -69,21 +72,70 @@ Deno.serve(async (req) => {
       e.band = Math.max(e.band, computed);
     }
 
-    let pairsThisTick = 0;
-    while (group.length >= 4 && pairsThisTick < MAX_PAIRS_PER_TICK) {
-      const four = pickFour(group);
-      if (!four) break;
-
-      const ok = await pairFour(admin, game, mode, four);
-      if (ok) {
-        created.push(ok);
-        for (const u of four) {
-          const idx = group.findIndex((g) => g.user_id === u.user_id);
-          if (idx !== -1) group.splice(idx, 1);
+    if (mode === 'solo') {
+      let pairsThisTick = 0;
+      while (group.length >= 4 && pairsThisTick < MAX_PAIRS_PER_TICK) {
+        const four = pickFour(group);
+        if (!four) break;
+        const ok = await pairFourSolo(admin, game, mode, four);
+        if (ok) {
+          created.push(ok);
+          for (const u of four) {
+            const idx = group.findIndex((g) => g.user_id === u.user_id);
+            if (idx !== -1) group.splice(idx, 1);
+          }
+          pairsThisTick += 1;
+        } else { break; }
+      }
+    } else if (mode === 'duo') {
+      // Group party rows: party is ready when both members' rows are present.
+      const partyMap = new Map<string, QueueEntry[]>();
+      for (const e of group) {
+        if (!e.party_id) continue;
+        const arr = partyMap.get(e.party_id);
+        if (arr) arr.push(e);
+        else partyMap.set(e.party_id, [e]);
+      }
+      const readyParties: Array<{
+        party_id: string;
+        members: QueueEntry[];
+        avg: number;
+        band: number;
+        oldest: string;
+      }> = [];
+      for (const [pid, members] of partyMap.entries()) {
+        if (members.length === 2) {
+          readyParties.push({
+            party_id: pid,
+            members,
+            avg: members[0].party_avg_rating,
+            band: Math.max(members[0].band, members[1].band),
+            oldest: members
+              .map((m) => m.enqueued_at)
+              .sort()[0],
+          });
         }
-        pairsThisTick += 1;
-      } else {
-        break;
+      }
+      readyParties.sort((a, b) => a.oldest.localeCompare(b.oldest));
+
+      let pairsThisTick = 0;
+      while (readyParties.length >= 2 && pairsThisTick < MAX_PAIRS_PER_TICK) {
+        const seedIdx = 0;
+        const seed = readyParties[seedIdx];
+        const partnerIdx = readyParties.findIndex(
+          (p, i) => i !== seedIdx && Math.abs(p.avg - seed.avg) <= Math.max(p.band, seed.band),
+        );
+        if (partnerIdx === -1) break;
+        const partner = readyParties[partnerIdx];
+
+        const ok = await pairTwoParties(admin, game, mode, seed.members, partner.members);
+        if (ok) {
+          created.push(ok);
+          // Remove both parties — careful with index order.
+          readyParties.splice(Math.max(seedIdx, partnerIdx), 1);
+          readyParties.splice(Math.min(seedIdx, partnerIdx), 1);
+          pairsThisTick += 1;
+        } else { break; }
       }
     }
   }
@@ -132,7 +184,7 @@ function mutuallyOverlap(four: QueueEntry[]): boolean {
   return true;
 }
 
-async function pairFour(
+async function pairFourSolo(
   admin: ReturnType<typeof adminClient>,
   game: string,
   mode: string,
@@ -243,6 +295,95 @@ async function pairFour(
       team1: [seat1.user_id, seat3.user_id],
       avg_rating_t0: Math.round((seat0.rating + seat2.rating) / 2),
       avg_rating_t1: Math.round((seat1.rating + seat3.rating) / 2),
+    },
+  });
+
+  return gameId;
+}
+
+async function pairTwoParties(
+  admin: ReturnType<typeof adminClient>,
+  game: string,
+  mode: string,
+  partyA: QueueEntry[],
+  partyB: QueueEntry[],
+): Promise<string | null> {
+  const ids = [...partyA, ...partyB].map((e) => e.user_id);
+  const { data: removed, error: rErr } = await admin
+    .from('mm_queue')
+    .delete()
+    .in('user_id', ids)
+    .select('user_id');
+  if (rErr) {
+    console.error('mm-tick duo delete failed', rErr);
+    return null;
+  }
+  if (!removed || removed.length < 4) {
+    if (removed && removed.length > 0) {
+      const survivors = [...partyA, ...partyB].filter(
+        (e) => removed.find((r) => r.user_id === e.user_id),
+      );
+      await admin.from('mm_queue').insert(survivors.map((s) => ({
+        user_id: s.user_id, game: s.game, mode: s.mode,
+        party_id: s.party_id, party_size: s.party_size, rating: s.rating,
+        party_avg_rating: s.party_avg_rating, band: s.band, enqueued_at: s.enqueued_at,
+      })));
+    }
+    return null;
+  }
+
+  // Party A → seats 0+2 (team 0); Party B → seats 1+3 (team 1).
+  const dealerSeat = Math.floor(Math.random() * 4);
+
+  const { data: gRow, error: gErr } = await admin
+    .from('games')
+    .insert({ game, mode, status: 'playing' })
+    .select('id')
+    .single();
+  if (gErr) {
+    console.error('mm-tick duo game insert failed', gErr);
+    return null;
+  }
+  const gameId = gRow.id;
+
+  await admin.from('euchre_games').insert({
+    game_id: gameId,
+    dealer_seat: dealerSeat,
+    hand_number: 0,
+  });
+
+  const playerRows: PlayerRow[] = [
+    { game_id: gameId, seat: 0, user_id: partyA[0].user_id, is_bot: false, missed_turns: 0 },
+    { game_id: gameId, seat: 1, user_id: partyB[0].user_id, is_bot: false, missed_turns: 0 },
+    { game_id: gameId, seat: 2, user_id: partyA[1].user_id, is_bot: false, missed_turns: 0 },
+    { game_id: gameId, seat: 3, user_id: partyB[1].user_id, is_bot: false, missed_turns: 0 },
+  ];
+  await admin.from('game_players').insert(playerRows);
+
+  const deal = buildDealForHand(gameId, playerRows, dealerSeat as Seat, 1);
+  await admin.from('game_hands').upsert(deal.hands);
+  await admin.from('euchre_games').update({
+    hand_number: 1,
+    upcard: deal.euchre.upcard,
+    upcard_status: deal.euchre.upcard_status,
+  }).eq('game_id', gameId);
+  await admin.from('games').update({
+    current_seat: deal.current_seat,
+    turn_deadline: deal.turn_deadline,
+  }).eq('id', gameId);
+
+  await admin.from('game_actions').insert({
+    game_id: gameId,
+    seat: dealerSeat,
+    action_type: 'matchmade',
+    payload: {
+      mode,
+      team0: [partyA[0].user_id, partyA[1].user_id],
+      team1: [partyB[0].user_id, partyB[1].user_id],
+      party_a: partyA[0].party_id,
+      party_b: partyB[0].party_id,
+      avg_rating_t0: partyA[0].party_avg_rating,
+      avg_rating_t1: partyB[0].party_avg_rating,
     },
   });
 

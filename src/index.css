@@ -5,3 +5,13 @@
 html, body, #root {
   height: 100%;
 }
+
+button {
+  touch-action: manipulation;
+}
+
+@supports (padding: max(0px)) {
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

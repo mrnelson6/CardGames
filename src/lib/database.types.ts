@@ -83,6 +83,30 @@ export interface RatingRow {
   updated_at: string;
 }
 
+export interface FriendRequestRow {
+  from_user: string;
+  to_user: string;
+  created_at: string;
+}
+
+export interface FriendshipRow {
+  user_a: string;
+  user_b: string;
+  created_at: string;
+}
+
+export interface EloHistoryRow {
+  id: string;
+  user_id: string;
+  game: string;
+  mode: string;
+  game_id: string;
+  rating_before: number;
+  rating_after: number;
+  delta: number;
+  created_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -125,6 +149,21 @@ export interface Database {
         Row: TrickPlayRow;
         Insert: Partial<TrickPlayRow>;
         Update: Partial<TrickPlayRow>;
+      };
+      friend_requests: {
+        Row: FriendRequestRow;
+        Insert: Pick<FriendRequestRow, 'from_user' | 'to_user'>;
+        Update: Partial<FriendRequestRow>;
+      };
+      friendships: {
+        Row: FriendshipRow;
+        Insert: Pick<FriendshipRow, 'user_a' | 'user_b'>;
+        Update: Partial<FriendshipRow>;
+      };
+      elo_history: {
+        Row: EloHistoryRow;
+        Insert: Partial<EloHistoryRow>;
+        Update: Partial<EloHistoryRow>;
       };
     };
   };

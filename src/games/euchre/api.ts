@@ -51,8 +51,20 @@ export const euchreApi = {
       expected_deadline,
     }),
   enqueueMatchmaking: (mode: 'solo' | 'duo') =>
-    invoke<{ ok: true; rating: number; band: number }>('enqueue-mm', {
+    invoke<{ ok: true; rating?: number; party_id?: string; band: number }>('enqueue-mm', {
       game: 'euchre',
       mode,
     }),
+  createParty: () =>
+    invoke<{ party_id: string; invite_code: string; leader_id: string; already_in_party?: boolean }>(
+      'create-party',
+      {},
+    ),
+  joinParty: (invite_code: string) =>
+    invoke<{ party_id: string; invite_code: string; leader_id?: string; already_member?: boolean }>(
+      'join-party',
+      { invite_code },
+    ),
+  leaveParty: () =>
+    invoke<{ ok: true; was_in_party?: boolean; disbanded?: boolean }>('leave-party', {}),
 };

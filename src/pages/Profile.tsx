@@ -2,29 +2,36 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import type { EloHistoryRow, RatingRow } from '../lib/database.types';
 
-interface Rating {
-  game: string;
-  mode: string;
-  elo: number;
-  games_played: number;
-}
+type Rating = Pick<RatingRow, 'game' | 'mode' | 'elo' | 'games_played'>;
+type HistoryEntry = Pick<EloHistoryRow, 'id' | 'game' | 'mode' | 'game_id' | 'rating_before' | 'rating_after' | 'delta' | 'created_at'>;
 
 export function Profile() {
   const { session } = useAuth();
   const [ratings, setRatings] = useState<Rating[] | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!session) return;
-    supabase
-      .from('ratings')
-      .select('game,mode,elo,games_played')
-      .eq('user_id', session.user.id)
-      .then(({ data, error }) => {
-        if (error) setError(error.message);
-        else setRatings(data ?? []);
-      });
+    Promise.all([
+      supabase
+        .from('ratings')
+        .select('game,mode,elo,games_played')
+        .eq('user_id', session.user.id),
+      supabase
+        .from('elo_history')
+        .select('id,game,mode,game_id,rating_before,rating_after,delta,created_at')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false })
+        .limit(20),
+    ]).then(([r, h]) => {
+      if (r.error) setError(r.error.message);
+      setRatings((r.data ?? []) as Rating[]);
+      if (h.error) setError(h.error.message);
+      setHistory((h.data ?? []) as HistoryEntry[]);
+    });
   }, [session]);
 
   return (
@@ -62,6 +69,35 @@ export function Profile() {
               ))}
             </tbody>
           </table>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold mb-2">Recent ranked games</h2>
+        {history === null ? (
+          <p className="text-slate-400 text-sm">Loading…</p>
+        ) : history.length === 0 ? (
+          <p className="text-slate-400 text-sm">No ranked history yet.</p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {history.map((h) => (
+              <li
+                key={h.id}
+                className="flex items-center justify-between gap-3 rounded border border-slate-700 bg-slate-800 px-3 py-2"
+              >
+                <span className="text-slate-400 text-xs tabular-nums">
+                  {new Date(h.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </span>
+                <span className="capitalize">{h.game} · {h.mode}</span>
+                <span className="tabular-nums">
+                  {h.rating_before} → <span className="font-semibold">{h.rating_after}</span>
+                </span>
+                <span className={`tabular-nums font-mono ${h.delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {h.delta >= 0 ? '+' : ''}{h.delta}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </div>
