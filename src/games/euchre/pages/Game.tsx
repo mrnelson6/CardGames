@@ -40,6 +40,9 @@ export function EuchreGamePage() {
   const [usernames, setUsernames] = useState<Map<string, string>>(new Map());
   const [hand, setHand] = useState<GameHandRow | null>(null);
   const [plays, setPlays] = useState<TrickPlayRow[]>([]);
+  // Resolved tricks for the entire game; we filter by current hand_number
+  // when rendering trick counts.
+  const [resolvedTricks, setResolvedTricks] = useState<Array<{ hand_number: number; winner_seat: number | null }>>([]);
   // Snapshot of the most-recently-completed trick — kept on screen for ~2.5s
   // after current_trick_id clears so players can see who won. We stamp the
   // hand number onto the snapshot so the renderer can drop it the instant
@@ -211,6 +214,32 @@ export function EuchreGamePage() {
     return () => clearTimeout(t);
   }, [recentTrick]);
 
+  // Resolved tricks for the whole game — drives the per-seat / per-team
+  // counts. Live-refreshed on any tricks update.
+  useEffect(() => {
+    if (!gameId) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const { data } = await supabase
+        .from('tricks')
+        .select('hand_number, winner_seat')
+        .eq('game_id', gameId);
+      if (cancelled) return;
+      setResolvedTricks((data ?? []) as Array<{ hand_number: number; winner_seat: number | null }>);
+    };
+    refresh();
+    const unsub = subscribeWithReconnect({
+      channel: `tricks-${gameId}`,
+      configure: (ch) =>
+        ch.on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'tricks', filter: `game_id=eq.${gameId}` },
+          () => refresh(),
+        ),
+    });
+    return () => { cancelled = true; unsub(); };
+  }, [gameId]);
+
   // Resolve usernames once.
   useEffect(() => {
     const ids = players.map((p) => p.user_id).filter((u): u is string => u !== null);
@@ -270,6 +299,16 @@ export function EuchreGamePage() {
   const trump = eu.trump_suit;
   const legalForMe: Card[] =
     phase === 'play' && trump !== null ? legalPlays(myCards, ledCard, trump) : [];
+
+  // Tricks won this hand — counts per seat plus team rollups.
+  const tricksPerSeat: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0 };
+  for (const t of resolvedTricks) {
+    if (t.hand_number === eu.hand_number && t.winner_seat !== null) {
+      tricksPerSeat[t.winner_seat] = (tricksPerSeat[t.winner_seat] ?? 0) + 1;
+    }
+  }
+  const tricksTeam0 = tricksPerSeat[0] + tricksPerSeat[2];
+  const tricksTeam1 = tricksPerSeat[1] + tricksPerSeat[3];
 
   // Render seat positions relative to the viewer's seat.
   const positionFor = (seat: Seat): string => {
@@ -374,7 +413,9 @@ export function EuchreGamePage() {
                   {isMaker && <span className="text-emerald-300 ml-1">M</span>}
                   {p?.is_bot && <span className="text-slate-500 ml-1">[bot]</span>}
                 </span>
-                <span className="text-slate-500">team {teamOf(seat)}</span>
+                <span className="text-slate-500">
+                  team {teamOf(seat)} · {tricksPerSeat[seat]}t
+                </span>
               </div>
               {isMe ? (
                 <div className="flex flex-wrap gap-1">
@@ -465,6 +506,7 @@ export function EuchreGamePage() {
           trumpSuit={trump ? SUIT_LABEL[trump] : undefined}
           makerTeam={eu.maker_seat !== null ? teamOf(eu.maker_seat) : undefined}
           myTeam={mySeat !== null ? teamOf(mySeat) : undefined}
+          tricks={trump !== null ? { team0: tricksTeam0, team1: tricksTeam1 } : undefined}
         />
       </div>
     </div>
