@@ -502,7 +502,7 @@ export function EuchreGamePage() {
 
         <div className="col-start-2 row-start-2 relative flex flex-col items-center justify-center gap-2">
           {trump && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+            <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none select-none">
               <span
                 className={`leading-none ${
                   trump === 'D' || trump === 'H' ? 'text-rose-500/35' : 'text-slate-100/30'
@@ -513,6 +513,7 @@ export function EuchreGamePage() {
               </span>
             </div>
           )}
+          <div className="relative z-10 flex flex-col items-center gap-2">
           <TrickArea
             // Only show live plays when the server says a trick is active
             // — guards against stale Realtime callbacks repopulating the
@@ -532,6 +533,7 @@ export function EuchreGamePage() {
           {eu.upcard && eu.upcard_status !== 'taken' && (
             <UpcardDisplay card={eu.upcard} status={eu.upcard_status ?? 'face_up'} />
           )}
+          </div>
         </div>
       </div>
 
