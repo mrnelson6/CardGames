@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { subscribeWithReconnect } from '../../../lib/realtime';
@@ -156,28 +156,49 @@ export function EuchreGamePage() {
     };
   }, [gameId, session]);
 
+  // Holds whichever trick id we last saw an active subscription for. When
+  // current_trick_id transitions to null, we use this to deterministically
+  // fetch the just-completed trick's full play set from the DB — which
+  // sidesteps the Realtime ordering race where the 4th trick_plays INSERT
+  // event can arrive after the euchre_games UPDATE that cleared
+  // current_trick_id, causing the snapshot to capture only 3 plays.
+  const prevTrickIdRef = useRef<string | null>(null);
+
   // Load current trick + plays whenever current_trick_id changes.
   useEffect(() => {
     if (!eu?.current_trick_id) {
-      // Trick just ended — snapshot what we had so the cards stay visible
-      // for a beat with the winner highlighted, then clear. Tag the
-      // snapshot with the hand it belonged to so we can drop it as soon
-      // as the hand advances.
+      const completedTrickId = prevTrickIdRef.current;
+      prevTrickIdRef.current = null;
       const trump = eu?.trump_suit;
       const handNumber = eu?.hand_number;
-      setPlays((prev) => {
-        if (prev.length > 0 && trump && handNumber !== undefined) {
-          const winnerSeat = trickWinner(
-            prev.map((p) => ({ seat: p.seat, card: p.card })),
-            trump,
-          );
-          setRecentTrick({ plays: prev, winnerSeat, handNumber });
-        }
-        return [];
-      });
+      setPlays([]);
+      if (completedTrickId && trump && handNumber !== undefined) {
+        // Fetch authoritative play set from DB so we capture the 4th
+        // (or 3rd, if alone) card even when Realtime hasn't delivered
+        // the INSERT event by the time we reach this effect.
+        let cancelled = false;
+        (async () => {
+          const { data } = await supabase
+            .from('trick_plays')
+            .select('*')
+            .eq('trick_id', completedTrickId)
+            .order('played_at');
+          if (cancelled) return;
+          const allPlays = (data ?? []) as TrickPlayRow[];
+          if (allPlays.length > 0) {
+            const winnerSeat = trickWinner(
+              allPlays.map((p) => ({ seat: p.seat, card: p.card })),
+              trump,
+            );
+            setRecentTrick({ plays: allPlays, winnerSeat, handNumber });
+          }
+        })();
+        return () => { cancelled = true; };
+      }
       return;
     }
     const trickId = eu.current_trick_id;
+    prevTrickIdRef.current = trickId;
     let cancelled = false;
     const fetchPlays = async () => {
       if (cancelled) return;
@@ -297,13 +318,28 @@ export function EuchreGamePage() {
 
   // Tricks won this hand — counts per seat plus team rollups.
   const tricksPerSeat: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0 };
+  let tricksThisHand = 0;
   for (const t of resolvedTricks) {
     if (t.hand_number === eu.hand_number && t.winner_seat !== null) {
       tricksPerSeat[t.winner_seat] = (tricksPerSeat[t.winner_seat] ?? 0) + 1;
+      tricksThisHand += 1;
     }
   }
   const tricksTeam0 = tricksPerSeat[0] + tricksPerSeat[2];
   const tricksTeam1 = tricksPerSeat[1] + tricksPerSeat[3];
+
+  // Cards remaining for an opponent seat. Each completed trick removes one
+  // card from every active player; if a play exists for this seat in the
+  // current (uncompleted) trick, that's another card already on the table.
+  // The partner of an alone-caller stays at 5 — they don't play this hand.
+  const aloneSeat = eu.alone_seat;
+  const alonePartnerSeat: number | null =
+    aloneSeat === null ? null : ((aloneSeat + 2) % 4);
+  const cardsRemainingFor = (seat: Seat): number => {
+    if (alonePartnerSeat !== null && seat === alonePartnerSeat) return 5;
+    const playedThisTrick = plays.some((p) => p.seat === seat) ? 1 : 0;
+    return Math.max(0, 5 - tricksThisHand - playedThisTrick);
+  };
 
   // Render seat positions relative to the viewer's seat.
   const positionFor = (seat: Seat): string => {
@@ -393,7 +429,7 @@ export function EuchreGamePage() {
           const isCurrent = game.current_seat === seat;
           const isDealer = eu.dealer_seat === seat;
           const isMaker = eu.maker_seat === seat;
-          const cardCount = isMe ? myCards.length : null;
+          const cardCount = isMe ? myCards.length : cardsRemainingFor(seat);
           return (
             <div
               key={seat}
@@ -435,9 +471,13 @@ export function EuchreGamePage() {
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-0.5">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <CardBack key={i} dim={cardCount !== null && i >= cardCount} />
-                  ))}
+                  {cardCount === 0 ? (
+                    <span className="text-xs text-slate-500 italic">empty</span>
+                  ) : (
+                    Array.from({ length: cardCount ?? 5 }).map((_, i) => (
+                      <CardBack key={i} dim={false} />
+                    ))
+                  )}
                 </div>
               )}
             </div>
