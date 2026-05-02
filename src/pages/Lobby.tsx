@@ -154,6 +154,7 @@ export function Lobby() {
       <header className="flex items-center justify-between mb-6 flex-wrap gap-2">
         <h1 className="text-3xl font-bold">Lobby</h1>
         <nav className="flex items-center gap-3 text-sm flex-wrap">
+          <Link to="/leaderboard" className="hover:underline">Leaderboard</Link>
           <Link to="/friends" className="hover:underline">Friends</Link>
           <Link to="/profile" className="hover:underline">Profile</Link>
           <button
