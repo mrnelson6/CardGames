@@ -622,7 +622,6 @@ function TrickArea({
   if (plays.length === 0 && !completed) {
     return <div className="text-xs text-slate-500 italic">— trick —</div>;
   }
-  // Active trick takes priority over the completed-snapshot.
   const showing = plays.length > 0 ? plays : completed!.plays;
   const winnerSeat = plays.length > 0 ? null : completed!.winnerSeat;
   const isCompletedView = plays.length === 0 && !!completed;
@@ -633,20 +632,34 @@ function TrickArea({
     if (winnerSeat === mySeat) return 'you';
     return usernames.get(p.user_id) ?? `seat ${winnerSeat}`;
   })();
+
+  // Layout each played card in front of the seat that played it, relative to
+  // the viewer (who sits at south). Side-seat cards rotate 90° so they appear
+  // dealt by the side player.
+  const offsetFor = (seat: number): 0 | 1 | 2 | 3 =>
+    (mySeat === null ? seat : (seat - mySeat + 4) % 4) as 0 | 1 | 2 | 3;
+  const POSITION_CLASS: Record<0 | 1 | 2 | 3, string> = {
+    0: 'absolute bottom-0 left-1/2 -translate-x-1/2',
+    1: 'absolute left-0 top-1/2 -translate-y-1/2 rotate-90',
+    2: 'absolute top-0 left-1/2 -translate-x-1/2',
+    3: 'absolute right-0 top-1/2 -translate-y-1/2 -rotate-90',
+  };
+
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="flex flex-wrap items-center justify-center gap-2">
+      <div className="relative w-44 h-44">
         {showing.map((p) => {
-          const player = players.find((pp) => pp.seat === p.seat);
-          const name = player?.user_id ? usernames.get(player.user_id) ?? '…' : `seat ${p.seat}`;
+          const offset = offsetFor(p.seat);
           const isWinner = winnerSeat !== null && p.seat === winnerSeat;
           const dim = isCompletedView && !isWinner;
           return (
-            <div key={p.seat} className="flex flex-col items-center">
-              <span className="text-[10px] text-slate-300">{p.seat === mySeat ? 'you' : name}</span>
-              <div className={dim ? 'opacity-40 grayscale' : isWinner ? 'ring-2 ring-emerald-300 rounded' : ''}>
-                <CardButton card={p.card} legal />
-              </div>
+            <div
+              key={p.seat}
+              className={`${POSITION_CLASS[offset]} ${
+                dim ? 'opacity-40 grayscale' : isWinner ? 'ring-2 ring-emerald-300 rounded' : ''
+              }`}
+            >
+              <CardButton card={p.card} legal />
             </div>
           );
         })}
