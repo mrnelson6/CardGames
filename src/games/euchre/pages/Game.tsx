@@ -495,13 +495,16 @@ export function EuchreGamePage() {
                       {myCards.map((c) => (
                         <motion.div
                           key={c}
-                          layout
                           layoutId={`card-${c}`}
                           // Shared layoutId with the trick area: when this
                           // card gets played, framer-motion animates the
                           // same motion element flying from your hand to
                           // the table center. exit fires only when the card
                           // is discarded (no matching layoutId destination).
+                          // Note: NO `layout` prop. We don't want the
+                          // remaining hand cards to layout-animate when one
+                          // leaves — that's what was causing the trick area
+                          // to flicker as a side effect of hand reflow.
                           initial={{ opacity: 0, scale: 0.85 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.85, y: -28 }}
@@ -664,23 +667,19 @@ function TrickArea({
   })();
 
   // Layout each played card in front of the seat that played it, relative to
-  // the viewer (who sits at south). Positioning is done via a 3x3 grid (one
-  // cell per cardinal direction) — no CSS translate/rotate on the motion
-  // element itself, so framer-motion's layout animation doesn't fight a
-  // utility transform when measuring the source/destination boxes. Rotation
-  // is applied as a motion property instead.
+  // the viewer (who sits at south). Each card is a grid item placed at the
+  // appropriate col/row, with `place-self-center` shrinking the motion
+  // element down to the card itself (so framer-motion measures card-sized
+  // boxes for layoutId animations, not full-cell-sized boxes).
   const offsetFor = (seat: number): 0 | 1 | 2 | 3 =>
     (mySeat === null ? seat : (seat - mySeat + 4) % 4) as 0 | 1 | 2 | 3;
   const CELL_CLASS: Record<0 | 1 | 2 | 3, string> = {
-    0: 'col-start-2 row-start-3 flex items-center justify-center',
-    1: 'col-start-1 row-start-2 flex items-center justify-center',
-    2: 'col-start-2 row-start-1 flex items-center justify-center',
-    3: 'col-start-3 row-start-2 flex items-center justify-center',
+    0: 'col-start-2 row-start-3 place-self-center',
+    1: 'col-start-1 row-start-2 place-self-center',
+    2: 'col-start-2 row-start-1 place-self-center',
+    3: 'col-start-3 row-start-2 place-self-center',
   };
   const ROTATION: Record<0 | 1 | 2 | 3, number> = { 0: 0, 1: 90, 2: 0, 3: -90 };
-  // Initial offset for opponent cards (they slide into the trick area FROM
-  // the direction of their seat) and exit offset (cards fly toward the
-  // winner's seat when the trick resolves).
   const ENTRY_OFFSET: Record<0 | 1 | 2 | 3, { x: number; y: number }> = {
     0: { x: 0, y: 80 },
     1: { x: -80, y: 0 },
@@ -702,6 +701,9 @@ function TrickArea({
               winnerSeat !== null
                 ? { ...ENTRY_OFFSET[offsetFor(winnerSeat)], opacity: 0, scale: 0.7, rotate: rotation }
                 : { opacity: 0, scale: 0.9, rotate: rotation };
+            const baseClass = `${CELL_CLASS[offset]} ${
+              dim ? 'opacity-40 grayscale' : isWinner ? 'ring-2 ring-emerald-300 rounded' : ''
+            }`;
             const motionProps = isSelf
               ? {
                   layoutId: `card-${p.card}`,
@@ -714,21 +716,14 @@ function TrickArea({
                   exit: exitTarget,
                 };
             return (
-              <div key={p.seat} className={CELL_CLASS[offset]}>
-                <motion.div
-                  className={
-                    dim
-                      ? 'opacity-40 grayscale'
-                      : isWinner
-                      ? 'ring-2 ring-emerald-300 rounded'
-                      : ''
-                  }
-                  transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-                  {...motionProps}
-                >
-                  <CardButton card={p.card} legal />
-                </motion.div>
-              </div>
+              <motion.div
+                key={p.seat}
+                className={baseClass}
+                transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                {...motionProps}
+              >
+                <CardButton card={p.card} legal />
+              </motion.div>
             );
           })}
         </AnimatePresence>
