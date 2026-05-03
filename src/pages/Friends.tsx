@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { subscribeWithReconnect } from '../lib/realtime';
 import { useAuth } from '../lib/auth';
+import { usePresence } from '../lib/presence';
 import { euchreApi } from '../games/euchre/api';
 import type { ProfileRow } from '../lib/database.types';
 
@@ -20,6 +21,8 @@ interface Friendship {
 export function Friends() {
   const { session } = useAuth();
   const me = session?.user.id ?? null;
+  const navigate = useNavigate();
+  const onlineUsers = usePresence();
 
   const [incoming, setIncoming] = useState<FriendRequest[]>([]);
   const [outgoing, setOutgoing] = useState<FriendRequest[]>([]);
@@ -270,6 +273,19 @@ export function Friends() {
     }
   };
 
+  const inviteToGame = async (toUser: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await euchreApi.inviteFriendToGame(toUser);
+      navigate(`/games/euchre/room/${r.invite_code}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const canInvite = partyState !== null && partyState.is_leader && partyState.member_count < 2;
 
   return (
@@ -372,13 +388,33 @@ export function Friends() {
           <ul className="space-y-2">
             {friends.map((f) => {
               const other = otherUserOf(f);
+              const isOnline = onlineUsers.has(other);
               return (
                 <li
                   key={`${f.user_a}-${f.user_b}`}
                   className="flex items-center justify-between rounded border border-slate-700 bg-slate-800 px-3 py-2"
                 >
-                  <span className="font-medium">{usernames.get(other) ?? other.slice(0, 8)}</span>
-                  <div className="flex gap-2">
+                  <span className="flex items-center gap-2 font-medium">
+                    <span
+                      className={`inline-block h-2.5 w-2.5 rounded-full ${
+                        isOnline ? 'bg-emerald-400' : 'bg-slate-600'
+                      }`}
+                      title={isOnline ? 'Online' : 'Offline'}
+                    />
+                    {usernames.get(other) ?? other.slice(0, 8)}
+                    <span className="text-xs text-slate-400">
+                      {isOnline ? 'online' : 'offline'}
+                    </span>
+                  </span>
+                  <div className="flex gap-2 flex-wrap justify-end">
+                    <button
+                      onClick={() => inviteToGame(other)}
+                      disabled={busy || !isOnline}
+                      title={isOnline ? 'Invite to a Euchre game' : 'Friend is offline'}
+                      className="rounded bg-indigo-600 hover:bg-indigo-500 px-3 py-1 text-sm disabled:opacity-50"
+                    >
+                      Invite to game
+                    </button>
                     {canInvite && (
                       <button
                         onClick={() => inviteToParty(other)}

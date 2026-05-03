@@ -75,4 +75,14 @@ export const euchreApi = {
   resumeControl: (game_id: string) =>
     invoke<{ ok: true; was_bot: boolean }>('resume-control', { game_id }),
   createBotGame: () => invoke<{ game_id: string }>('create-bot-game', {}),
+  inviteFriendToGame: (to_user: string) =>
+    invoke<{ game_id: string; invite_code: string; invite_id: string }>(
+      'invite-friend-to-game',
+      { to_user },
+    ),
+  acceptGameInvite: (invite_id: string) =>
+    invoke<{ game_id: string; invite_code: string; seat: number | null; status: string }>(
+      'accept-game-invite',
+      { invite_id },
+    ),
 };

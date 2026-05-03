@@ -1,8 +1,21 @@
 import { useEffect } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 import { AppRoutes } from './routes';
-import { AuthProvider } from './lib/auth';
+import { AuthProvider, useAuth } from './lib/auth';
 import { bindRealtimeAuth } from './lib/realtime';
+import { usePresenceTracker } from './lib/presence';
+import { InviteNotifier } from './components/InviteNotifier';
+
+function AuthedShell() {
+  const { session } = useAuth();
+  usePresenceTracker(session?.user.id ?? null);
+  return (
+    <>
+      <AppRoutes />
+      <InviteNotifier />
+    </>
+  );
+}
 
 export function App() {
   useEffect(() => {
@@ -12,7 +25,7 @@ export function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <AppRoutes />
+        <AuthedShell />
       </BrowserRouter>
     </AuthProvider>
   );

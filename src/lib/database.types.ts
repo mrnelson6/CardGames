@@ -165,6 +165,20 @@ export interface Database {
         Insert: Partial<EloHistoryRow>;
         Update: Partial<EloHistoryRow>;
       };
+      game_invites: {
+        Row: GameInviteRow;
+        Insert: Pick<GameInviteRow, 'from_user' | 'to_user' | 'game_id' | 'invite_code'>;
+        Update: Partial<GameInviteRow>;
+      };
     };
   };
+}
+
+export interface GameInviteRow {
+  id: string;
+  from_user: string;
+  to_user: string;
+  game_id: string;
+  invite_code: string;
+  created_at: string;
 }
