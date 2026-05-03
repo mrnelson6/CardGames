@@ -22,10 +22,19 @@ function notify() {
 
 function ensureChannel() {
   if (channel) return channel;
-  const ch = supabase.channel(CHANNEL, { config: { presence: { key: '' } } });
+  // Don't set presence.key — the default is a unique session ref so multiple
+  // tabs of the same user don't collide. We extract user_id from each session's
+  // tracked payload below instead of relying on the key.
+  const ch = supabase.channel(CHANNEL);
   ch.on('presence', { event: 'sync' }, () => {
-    const state = ch.presenceState();
-    onlineUsers = new Set(Object.keys(state));
+    const state = ch.presenceState() as Record<string, Array<{ user_id?: string }>>;
+    const ids = new Set<string>();
+    for (const sessions of Object.values(state)) {
+      for (const s of sessions) {
+        if (s.user_id) ids.add(s.user_id);
+      }
+    }
+    onlineUsers = ids;
     notify();
   });
   ch.subscribe(async (status) => {
