@@ -408,7 +408,7 @@ export function EuchreGamePage() {
   }
 
   return (
-    <div className="min-h-full p-3 max-w-5xl mx-auto">
+    <div className="min-h-full p-2 sm:p-3 max-w-5xl mx-auto">
       <header className="flex items-center justify-between mb-3">
         <div>
           <h1 className="text-xl font-bold">Euchre</h1>
@@ -459,7 +459,7 @@ export function EuchreGamePage() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 grid-rows-3 gap-3 bg-felt-dark p-4 rounded-2xl min-h-[55vh]">
+      <div className="grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 bg-felt-dark p-2 sm:p-4 rounded-2xl min-h-[55vh]">
         {([0, 1, 2, 3] as Seat[]).map((seat) => {
           const p = players.find((pp) => pp.seat === seat);
           const username = p?.user_id ? usernames.get(p.user_id) ?? '…' : 'open';
@@ -471,7 +471,7 @@ export function EuchreGamePage() {
           return (
             <div
               key={seat}
-              className={`${positionFor(seat)} rounded-xl border-2 p-2 bg-slate-900/60 ${
+              className={`${positionFor(seat)} rounded-xl border-2 p-1 sm:p-2 bg-slate-900/60 ${
                 isCurrent ? 'border-emerald-400' : 'border-slate-700'
               }`}
             >
@@ -517,12 +517,16 @@ export function EuchreGamePage() {
                   )}
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-0.5">
+                <div className="flex">
                   {cardCount === 0 ? (
                     <span className="text-xs text-slate-500 italic">empty</span>
                   ) : (
+                    // Overlap card backs with negative margin so 5 cards
+                    // fit comfortably in a narrow mobile seat panel.
                     Array.from({ length: cardCount ?? 5 }).map((_, i) => (
-                      <CardBack key={i} dim={false} />
+                      <div key={i} className="-ml-4 first:ml-0">
+                        <CardBack dim={false} />
+                      </div>
                     ))
                   )}
                 </div>
@@ -678,7 +682,7 @@ function TrickArea({
 
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="grid grid-cols-3 grid-rows-3 w-48 h-48">
+      <div className="grid grid-cols-3 grid-rows-3 w-40 h-40 sm:w-48 sm:h-48">
         <AnimatePresence>
           {showing.map((p) => {
             const offset = offsetFor(p.seat);
@@ -736,7 +740,7 @@ function CardButton({ card, legal, onClick }: { card: Card; legal: boolean; onCl
     <button
       onClick={onClick}
       disabled={!onClick}
-      className={`flex h-16 w-12 flex-col items-center justify-between rounded border-2 bg-white px-1 py-0.5 ${
+      className={`flex h-14 w-10 sm:h-16 sm:w-12 flex-col items-center justify-between rounded border-2 bg-white px-1 py-0.5 ${
         isRed(suit) ? 'text-red-600' : 'text-black'
       } ${
         onClick
@@ -746,9 +750,9 @@ function CardButton({ card, legal, onClick }: { card: Card; legal: boolean; onCl
           : 'border-slate-500 opacity-40'
       }`}
     >
-      <span className="self-start text-xs font-bold">{RANK_LABEL[rank]}</span>
-      <span className="text-lg">{SUIT_LABEL[suit]}</span>
-      <span className="self-end text-xs font-bold rotate-180">{RANK_LABEL[rank]}</span>
+      <span className="self-start text-[10px] sm:text-xs font-bold">{RANK_LABEL[rank]}</span>
+      <span className="text-base sm:text-lg">{SUIT_LABEL[suit]}</span>
+      <span className="self-end text-[10px] sm:text-xs font-bold rotate-180">{RANK_LABEL[rank]}</span>
     </button>
   );
 }
@@ -756,7 +760,7 @@ function CardButton({ card, legal, onClick }: { card: Card; legal: boolean; onCl
 function CardBack({ dim }: { dim: boolean }) {
   return (
     <div
-      className={`h-12 w-9 rounded border bg-blue-700 border-blue-900 ${
+      className={`h-10 w-7 sm:h-12 sm:w-9 rounded border bg-blue-700 border-blue-900 ${
         dim ? 'opacity-20' : ''
       }`}
       style={{
