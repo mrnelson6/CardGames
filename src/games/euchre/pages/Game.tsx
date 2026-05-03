@@ -20,6 +20,10 @@ import { BidPanel } from '../components/BidPanel';
 import { ScorePanel } from '../components/ScorePanel';
 import { TurnTimer } from '../../../components/TurnTimer';
 import { euchreApi } from '../api';
+import { useChat } from '../chat/useChat';
+import { useMutes } from '../chat/useMutes';
+import { ChatLauncher } from '../chat/ChatLauncher';
+import { SeatChatBubble } from '../chat/SeatChatBubble';
 
 type Seat = 0 | 1 | 2 | 3;
 const teamOf = (seat: number): 0 | 1 => (seat % 2) as 0 | 1;
@@ -400,6 +404,10 @@ export function EuchreGamePage() {
   const myPlayerRow = mySeat !== null ? players.find((p) => p.seat === mySeat) : undefined;
   const meIsBot = myPlayerRow?.is_bot === true;
 
+  const chat = useChat(game.id, mySeat, session.user.id);
+  const { mutes, toggle: toggleMute } = useMutes();
+  const bubbleBySeat = chat.latestBySeat(mutes);
+
   function guard<T>(fn: () => Promise<T>): () => Promise<void> {
     return async () => {
       if (busy) return;
@@ -469,13 +477,19 @@ export function EuchreGamePage() {
           const isDealer = eu.dealer_seat === seat;
           const isMaker = eu.maker_seat === seat;
           const cardCount = isMe ? myCards.length : cardsRemainingFor(seat);
+          const seatOffset = (mySeat === null ? seat : (seat - mySeat + 4) % 4) as 0 | 1 | 2 | 3;
+          const seatBubble = bubbleBySeat[seat];
+          const seatUserId = p?.user_id ?? null;
+          const seatMuted = seatUserId ? mutes.has(seatUserId) : false;
+          const canMute = !isMe && !!seatUserId && !p?.is_bot;
           return (
             <div
               key={seat}
-              className={`${positionFor(seat)} rounded-xl border-2 p-1 sm:p-2 bg-slate-900/60 ${
+              className={`${positionFor(seat)} relative rounded-xl border-2 p-1 sm:p-2 bg-slate-900/60 ${
                 isCurrent ? 'border-emerald-400' : 'border-slate-700'
               }`}
             >
+              <SeatChatBubble message={seatBubble} viewerOffset={seatOffset} />
               <div className="text-xs flex justify-between mb-1">
                 <span className="font-semibold">
                   {username} {isMe && <span className="text-emerald-400">(you)</span>}
@@ -483,8 +497,21 @@ export function EuchreGamePage() {
                   {isMaker && <span className="text-emerald-300 ml-1">M</span>}
                   {p?.is_bot && <span className="text-slate-500 ml-1">[bot]</span>}
                 </span>
-                <span className="text-slate-500">
+                <span className="text-slate-500 flex items-center gap-1.5">
                   team {teamOf(seat)} · {tricksPerSeat[seat]}t
+                  {canMute && (
+                    <button
+                      onClick={() => toggleMute(seatUserId!)}
+                      title={seatMuted ? 'Unmute' : 'Mute'}
+                      className={`text-[10px] uppercase tracking-wider rounded px-1 py-px border transition ${
+                        seatMuted
+                          ? 'border-red-500 text-red-300 bg-red-950/40'
+                          : 'border-slate-600 text-slate-400 hover:border-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {seatMuted ? 'muted' : 'mute'}
+                    </button>
+                  )}
                 </span>
               </div>
               {isMe ? (
@@ -607,6 +634,11 @@ export function EuchreGamePage() {
           />
           </div>
         </div>
+
+        <ChatLauncher
+          onSend={(kind, content) => chat.send(kind, content)}
+          disabled={mySeat === null}
+        />
 
         {/* Score overlay in the top-right corner of the felt — keeps it
             visible without taking a separate row below the table. */}
