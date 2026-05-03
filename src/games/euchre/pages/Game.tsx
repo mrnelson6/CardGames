@@ -468,7 +468,7 @@ export function EuchreGamePage() {
           return (
             <div
               key={seat}
-              className={`${positionFor(seat)} rounded-xl border-2 p-1 sm:p-2 bg-slate-900/60 ${
+              className={`${positionFor(seat)} place-self-center rounded-xl border-2 p-1 sm:p-2 bg-slate-900/60 ${
                 isCurrent ? 'border-emerald-400' : 'border-slate-700'
               }`}
             >
