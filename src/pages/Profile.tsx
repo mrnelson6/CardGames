@@ -7,7 +7,42 @@ import type { EloHistoryRow, ProfileRow, RatingRow } from '../lib/database.types
 type Rating = Pick<RatingRow, 'game' | 'mode' | 'elo' | 'games_played'>;
 type HistoryEntry = Pick<EloHistoryRow, 'id' | 'game' | 'mode' | 'game_id' | 'rating_before' | 'rating_after' | 'delta' | 'created_at'>;
 
+interface UserStats {
+  games_played: number;
+  games_won: number;
+  first_game_at: string | null;
+  tricks_won: number;
+  total_tricks: number;
+  hands_played: number;
+  trump_called: number;
+  trump_called_set: number;
+  loners_won: number;
+  marches_won: number;
+  most_played_with: { user_id: string; username: string; games: number } | null;
+  highest_beaten: { user_id: string; username: string; rating: number } | null;
+  favorite_trump: { suit: 'C' | 'D' | 'H' | 'S'; count: number } | null;
+}
+
 const USERNAME_RE = /^[A-Za-z0-9_]+$/;
+
+const SUIT_LABEL: Record<string, string> = {
+  C: '♣ Clubs',
+  D: '♦ Diamonds',
+  H: '♥ Hearts',
+  S: '♠ Spades',
+};
+
+function formatPct(num: number, denom: number): string {
+  if (denom === 0) return '—';
+  return `${Math.round((num / denom) * 100)}%`;
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
+}
 
 export function Profile() {
   const { session } = useAuth();
@@ -16,6 +51,7 @@ export function Profile() {
   const [profile, setProfile] = useState<Pick<ProfileRow, 'username'> | null>(null);
   const [ratings, setRatings] = useState<Rating[] | null>(null);
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  const [stats, setStats] = useState<UserStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
@@ -33,13 +69,16 @@ export function Profile() {
         .eq('user_id', me)
         .order('created_at', { ascending: false })
         .limit(20),
-    ]).then(([p, r, h]) => {
+      supabase.rpc('get_user_stats' as never, { p_user: me } as never),
+    ]).then(([p, r, h, s]) => {
       if (p.error) setError(p.error.message);
       else setProfile(p.data as Pick<ProfileRow, 'username'> | null);
       if (r.error) setError(r.error.message);
       setRatings((r.data ?? []) as Rating[]);
       if (h.error) setError(h.error.message);
       setHistory((h.data ?? []) as HistoryEntry[]);
+      if (s.error) setError(s.error.message);
+      else setStats((s.data as UserStats) ?? null);
     });
   }, [me]);
 
@@ -142,6 +181,77 @@ export function Profile() {
       </section>
 
       <section className="mb-6">
+        <h2 className="text-lg font-semibold mb-2">Lifetime stats</h2>
+        {stats === null ? (
+          <p className="text-slate-400 text-sm">Loading…</p>
+        ) : stats.games_played === 0 ? (
+          <p className="text-slate-400 text-sm">No completed games yet.</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Stat label="Games played" value={stats.games_played} />
+            <Stat
+              label="Games won"
+              value={stats.games_won}
+              sub={`${formatPct(stats.games_won, stats.games_played)} win rate`}
+            />
+            <Stat
+              label="Tricks won"
+              value={stats.tricks_won}
+              sub={`${formatPct(stats.tricks_won, stats.total_tricks)} of ${stats.total_tricks}`}
+            />
+            <Stat label="Hands played" value={stats.hands_played} />
+            <Stat
+              label="Times called trump"
+              value={stats.trump_called}
+              sub={
+                stats.trump_called > 0
+                  ? `${formatPct(stats.trump_called_set, stats.trump_called)} got set`
+                  : undefined
+              }
+            />
+            <Stat label="Got set as caller" value={stats.trump_called_set} />
+            <Stat label="Loners won" value={stats.loners_won} />
+            <Stat label="Marches won" value={stats.marches_won} />
+            <Stat
+              label="First game"
+              value={formatDate(stats.first_game_at)}
+              small
+            />
+            <Stat
+              label="Most played with"
+              value={stats.most_played_with?.username ?? '—'}
+              sub={
+                stats.most_played_with
+                  ? `${stats.most_played_with.games} games`
+                  : undefined
+              }
+              small
+            />
+            <Stat
+              label="Best opponent beaten"
+              value={stats.highest_beaten?.username ?? '—'}
+              sub={
+                stats.highest_beaten
+                  ? `ELO ${stats.highest_beaten.rating}`
+                  : undefined
+              }
+              small
+            />
+            <Stat
+              label="Favorite trump"
+              value={stats.favorite_trump ? SUIT_LABEL[stats.favorite_trump.suit] : '—'}
+              sub={
+                stats.favorite_trump
+                  ? `${stats.favorite_trump.count} calls`
+                  : undefined
+              }
+              small
+            />
+          </div>
+        )}
+      </section>
+
+      <section className="mb-6">
         <h2 className="text-lg font-semibold mb-2">Ratings</h2>
         {ratings === null ? (
           <p className="text-slate-400">Loading…</p>
@@ -199,6 +309,32 @@ export function Profile() {
           </ul>
         )}
       </section>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  sub,
+  small,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  small?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2">
+      <div className="text-xs text-slate-400">{label}</div>
+      <div
+        className={`font-semibold tabular-nums ${
+          small ? 'text-base' : 'text-2xl'
+        }`}
+      >
+        {value}
+      </div>
+      {sub && <div className="text-xs text-slate-500 mt-0.5">{sub}</div>}
     </div>
   );
 }

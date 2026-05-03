@@ -12,3 +12,4 @@ dist-ssr
 *.tsbuildinfo
 supabase/.branches
 supabase/.temp
+.claude/settings.local.json
