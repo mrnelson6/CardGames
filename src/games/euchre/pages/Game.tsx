@@ -459,7 +459,7 @@ export function EuchreGamePage() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 bg-felt-dark p-2 sm:p-4 rounded-2xl min-h-[55vh]">
+      <div className="grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 bg-felt-dark p-2 sm:p-4 rounded-2xl">
         {([0, 1, 2, 3] as Seat[]).map((seat) => {
           const p = players.find((pp) => pp.seat === seat);
           const username = p?.user_id ? usernames.get(p.user_id) ?? '…' : 'open';
