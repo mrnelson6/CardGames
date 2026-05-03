@@ -115,7 +115,6 @@ export const PHRASES: string[] = [
   'Thanks',
   'Sorry',
   'My bad',
-  'Lead trump',
   'Hurry up',
   'Lol',
   'Wow',
