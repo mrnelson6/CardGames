@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { subscribeWithReconnect } from '../lib/realtime';
 import { useAuth } from '../lib/auth';
+import { usePresence } from '../lib/presence';
 import { euchreApi } from '../games/euchre/api';
 import type { ProfileRow } from '../lib/database.types';
-
-const GAMES = [{ id: 'euchre', name: 'Euchre', enabled: true }];
 
 interface PartyState {
   party_id: string;
@@ -15,18 +14,31 @@ interface PartyState {
   members: Array<{ user_id: string; username: string }>;
 }
 
+interface FriendRow {
+  user_a: string;
+  user_b: string;
+}
+
+type View = 'hub' | 'duo' | 'private';
+
 export function Lobby() {
   const { session } = useAuth();
   const navigate = useNavigate();
   const me = session?.user.id ?? null;
+  const onlineUsers = usePresence();
 
+  const [view, setView] = useState<View>('hub');
   const [busy, setBusy] = useState(false);
-  const [joinCode, setJoinCode] = useState('');
-  const [partyCode, setPartyCode] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [party, setParty] = useState<PartyState | null>(null);
 
-  // Load current party on mount + subscribe to membership changes.
+  const [party, setParty] = useState<PartyState | null>(null);
+  const [partyCode, setPartyCode] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+
+  const [friends, setFriends] = useState<FriendRow[]>([]);
+  const [usernames, setUsernames] = useState<Map<string, string>>(new Map());
+
+  // Party state + realtime.
   useEffect(() => {
     if (!me) return;
     let cancelled = false;
@@ -86,7 +98,7 @@ export function Lobby() {
     return () => { cancelled = true; unsub(); };
   }, [me]);
 
-  // Auto-navigate to the queue page when our party leader queues us.
+  // Auto-navigate when our party leader queues us.
   useEffect(() => {
     if (!me) return;
     const unsub = subscribeWithReconnect({
@@ -105,6 +117,45 @@ export function Lobby() {
     return () => unsub();
   }, [me, navigate]);
 
+  // Friends list (used by "With a friend" subview).
+  useEffect(() => {
+    if (!me) return;
+    let cancelled = false;
+    supabase
+      .from('friendships')
+      .select('user_a,user_b')
+      .then(({ data }) => {
+        if (cancelled) return;
+        setFriends((data ?? []) as FriendRow[]);
+      });
+    return () => { cancelled = true; };
+  }, [me]);
+
+  // Resolve usernames for friends.
+  useEffect(() => {
+    if (!me || friends.length === 0) return;
+    const ids = new Set<string>();
+    for (const f of friends) {
+      ids.add(f.user_a === me ? f.user_b : f.user_a);
+    }
+    const missing = Array.from(ids).filter((id) => !usernames.has(id));
+    if (missing.length === 0) return;
+    supabase
+      .from('profiles')
+      .select('user_id, username')
+      .in('user_id', missing)
+      .then(({ data }) => {
+        if (!data) return;
+        setUsernames((prev) => {
+          const next = new Map(prev);
+          for (const r of data as Pick<ProfileRow, 'user_id' | 'username'>[]) {
+            next.set(r.user_id, r.username);
+          }
+          return next;
+        });
+      });
+  }, [friends, me]);
+
   const wrap = async (fn: () => Promise<void>) => {
     setBusy(true); setError(null);
     try { await fn(); }
@@ -112,19 +163,21 @@ export function Lobby() {
     finally { setBusy(false); }
   };
 
+  const onQueueSolo = () => navigate('/games/euchre/play/solo');
+
+  const onQueueDuo = () =>
+    wrap(async () => {
+      await euchreApi.enqueueMatchmaking('duo');
+      navigate('/games/euchre/play/duo');
+    });
+
   const onCreateRoom = () =>
     wrap(async () => {
       const r = await euchreApi.createRoom();
       navigate(`/games/euchre/room/${r.invite_code}`);
     });
 
-  const onCreateBotGame = () =>
-    wrap(async () => {
-      const r = await euchreApi.createBotGame();
-      navigate(`/games/euchre/g/${r.game_id}`);
-    });
-
-  const onJoinRoom = (e: React.FormEvent) => {
+  const onJoinRoom = (e: FormEvent) => {
     e.preventDefault();
     if (!joinCode.trim()) return;
     wrap(async () => {
@@ -135,10 +188,9 @@ export function Lobby() {
     });
   };
 
-  const onCreateParty = () =>
-    wrap(async () => { await euchreApi.createParty(); });
-
-  const onJoinParty = (e: React.FormEvent) => {
+  const onCreateParty = () => wrap(async () => { await euchreApi.createParty(); });
+  const onLeaveParty = () => wrap(async () => { await euchreApi.leaveParty(); });
+  const onJoinPartyByCode = (e: FormEvent) => {
     e.preventDefault();
     if (!partyCode.trim()) return;
     wrap(async () => {
@@ -146,17 +198,21 @@ export function Lobby() {
       setPartyCode('');
     });
   };
+  const onInviteFriend = (toUser: string) =>
+    wrap(async () => { await euchreApi.inviteToParty(toUser); });
 
-  const onLeaveParty = () => wrap(async () => { await euchreApi.leaveParty(); });
-
-  const onQueueDuo = () =>
+  const onCreateBotGame = () =>
     wrap(async () => {
-      await euchreApi.enqueueMatchmaking('duo');
-      navigate('/games/euchre/play/duo');
+      const r = await euchreApi.createBotGame();
+      navigate(`/games/euchre/g/${r.game_id}`);
     });
 
+  const friendIds = friends.map((f) => (f.user_a === me ? f.user_b : f.user_a));
+  const partyMemberIds = new Set((party?.members ?? []).map((m) => m.user_id));
+  const inviteableFriends = friendIds.filter((id) => !partyMemberIds.has(id));
+
   return (
-    <div className="min-h-full p-6 max-w-3xl mx-auto">
+    <div className="min-h-full p-4 sm:p-6 max-w-4xl mx-auto">
       <header className="flex items-center justify-between mb-6 flex-wrap gap-2">
         <h1 className="text-3xl font-bold">Lobby</h1>
         <nav className="flex items-center gap-3 text-sm flex-wrap">
@@ -172,102 +228,226 @@ export function Lobby() {
         </nav>
       </header>
 
-      <p className="text-sm text-slate-400 mb-4">
+      <p className="text-sm text-slate-400 mb-6">
         Signed in as <span className="text-slate-200">{session?.user.email ?? 'guest'}</span>
       </p>
 
-      <section className="mb-6">
-        <h2 className="text-lg font-semibold mb-3">Pick a game</h2>
-        {GAMES.map((g) => (
-          <div
-            key={g.id}
-            className={`rounded-lg border border-slate-700 bg-slate-800 p-4 ${g.enabled ? '' : 'opacity-50'}`}
-          >
-            <h3 className="text-xl font-medium mb-2">{g.name}</h3>
-            {g.enabled ? (
-              <div className="flex flex-wrap gap-2">
-                <Link to={`/games/${g.id}/play/solo`} className="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm">
-                  Solo queue
-                </Link>
-                {party && party.members.length === 2 ? (
-                  <button
-                    onClick={onQueueDuo}
-                    disabled={busy}
-                    className="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm disabled:opacity-50"
-                  >
-                    Duo queue (party of 2)
-                  </button>
-                ) : (
-                  <span className="rounded border border-slate-600 px-3 py-1.5 text-sm text-slate-500">
-                    Duo queue (need party of 2)
-                  </span>
-                )}
-                <button
-                  onClick={onCreateRoom}
-                  disabled={busy}
-                  className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm disabled:opacity-50"
-                >
-                  {busy ? 'Working…' : 'Create private room'}
-                </button>
-                <button
-                  onClick={onCreateBotGame}
-                  disabled={busy}
-                  className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm disabled:opacity-50"
-                >
-                  Play vs 3 bots
-                </button>
-                <Link to={`/games/${g.id}/hotseat`} className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm">
-                  Hot-seat (practice)
-                </Link>
-              </div>
-            ) : (
-              <p className="text-sm text-slate-400">Coming soon</p>
-            )}
-          </div>
-        ))}
-      </section>
+      {error && (
+        <div className="mb-4 rounded bg-red-900/50 border border-red-700 p-2 text-sm text-red-200">
+          {error}
+        </div>
+      )}
 
-      <section className="mb-6">
-        <h2 className="text-lg font-semibold mb-3">Party</h2>
-        {party ? (
-          <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 space-y-3">
-            <div className="flex items-baseline justify-between gap-3 flex-wrap">
-              <span className="text-sm text-slate-400">Code:</span>
-              <code className="text-2xl font-mono tracking-widest text-emerald-300">{party.invite_code}</code>
-              <button
-                onClick={() => navigator.clipboard.writeText(party.invite_code)}
-                className="rounded border border-slate-600 px-3 py-1 text-xs hover:bg-slate-700"
-              >
-                Copy
-              </button>
-            </div>
-            <ul className="text-sm space-y-1">
-              {party.members.map((m) => (
-                <li key={m.user_id}>
-                  <span className="font-medium">{m.username}</span>
-                  {m.user_id === party.leader_id && <span className="text-amber-300 ml-2 text-xs">leader</span>}
-                  {m.user_id === me && <span className="text-emerald-400 ml-2 text-xs">(you)</span>}
-                </li>
-              ))}
-            </ul>
-            <button
-              onClick={onLeaveParty}
-              disabled={busy}
-              className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1 text-sm disabled:opacity-50"
-            >
-              Leave party
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <button
-              onClick={onCreateParty}
-              disabled={busy}
-              className="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm disabled:opacity-50"
-            >
-              {busy ? 'Creating…' : 'Create party'}
-            </button>
-            <form onSubmit={onJoinParty} className="flex gap-2 max-w-sm">
+      {view === 'hub' && (
+        <HubView
+          party={party}
+          onQuickMatch={onQueueSolo}
+          onWithFriend={() => setView('duo')}
+          onPrivate={() => setView('private')}
+          onBots={onCreateBotGame}
+          busy={busy}
+        />
+      )}
+
+      {view === 'duo' && (
+        <DuoView
+          me={me!}
+          party={party}
+          inviteableFriends={inviteableFriends}
+          usernames={usernames}
+          onlineUsers={onlineUsers}
+          partyCode={partyCode}
+          setPartyCode={setPartyCode}
+          onBack={() => setView('hub')}
+          onCreateParty={onCreateParty}
+          onLeaveParty={onLeaveParty}
+          onJoinPartyByCode={onJoinPartyByCode}
+          onInviteFriend={onInviteFriend}
+          onQueueDuo={onQueueDuo}
+          busy={busy}
+        />
+      )}
+
+      {view === 'private' && (
+        <PrivateView
+          joinCode={joinCode}
+          setJoinCode={setJoinCode}
+          onBack={() => setView('hub')}
+          onCreateRoom={onCreateRoom}
+          onJoinRoom={onJoinRoom}
+          busy={busy}
+        />
+      )}
+
+      <footer className="mt-10 pt-6 border-t border-slate-800 text-xs text-slate-500 flex items-center gap-3 flex-wrap">
+        <span>Practice:</span>
+        <Link to="/games/euchre/hotseat" className="hover:underline">Hot-seat (4 players, one device)</Link>
+      </footer>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Hub
+// ---------------------------------------------------------------------------
+
+interface HubViewProps {
+  party: PartyState | null;
+  onQuickMatch: () => void;
+  onWithFriend: () => void;
+  onPrivate: () => void;
+  onBots: () => void;
+  busy: boolean;
+}
+
+function HubView({ party, onQuickMatch, onWithFriend, onPrivate, onBots, busy }: HubViewProps) {
+  const partySize = party?.members.length ?? 0;
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <ModeCard
+        accent="emerald"
+        title="Quick match"
+        subtitle="Ranked solo"
+        body="Get matched into a 4-player ranked game. Teams are balanced by rating."
+        onClick={onQuickMatch}
+        disabled={busy}
+      />
+      <ModeCard
+        accent="violet"
+        title="With a friend"
+        subtitle="Ranked duo"
+        body="Team up with one friend. You'll be matched against another duo."
+        status={
+          partySize === 2
+            ? 'Party ready (2/2)'
+            : partySize === 1
+              ? 'Party started — invite 1 more'
+              : null
+        }
+        onClick={onWithFriend}
+        disabled={busy}
+      />
+      <ModeCard
+        accent="sky"
+        title="Private room"
+        subtitle="Casual with friends"
+        body="Create or join a 6-letter code. Up to 3 friends, bots fill the rest."
+        onClick={onPrivate}
+        disabled={busy}
+      />
+      <ModeCard
+        accent="amber"
+        title="Vs bots"
+        subtitle="Casual practice"
+        body="Jump into a game against 3 bots. No matchmaking, no waiting."
+        onClick={onBots}
+        disabled={busy}
+      />
+    </div>
+  );
+}
+
+const ACCENTS: Record<string, string> = {
+  emerald: 'from-emerald-500/20 to-emerald-700/5 border-emerald-700/60 hover:border-emerald-500',
+  violet:  'from-violet-500/20 to-violet-700/5 border-violet-700/60 hover:border-violet-500',
+  sky:     'from-sky-500/20 to-sky-700/5 border-sky-700/60 hover:border-sky-500',
+  amber:   'from-amber-500/20 to-amber-700/5 border-amber-700/60 hover:border-amber-500',
+};
+const ACCENT_TEXT: Record<string, string> = {
+  emerald: 'text-emerald-300',
+  violet:  'text-violet-300',
+  sky:     'text-sky-300',
+  amber:   'text-amber-300',
+};
+
+function ModeCard({
+  accent,
+  title,
+  subtitle,
+  body,
+  status,
+  onClick,
+  disabled,
+}: {
+  accent: keyof typeof ACCENTS;
+  title: string;
+  subtitle: string;
+  body: string;
+  status?: string | null;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`text-left rounded-xl bg-gradient-to-br ${ACCENTS[accent]} border-2 p-5 transition disabled:opacity-50 disabled:cursor-not-allowed group`}
+    >
+      <div className={`text-xs uppercase tracking-wider font-medium ${ACCENT_TEXT[accent]}`}>
+        {subtitle}
+      </div>
+      <div className="text-2xl font-bold mt-1 mb-2">{title}</div>
+      <p className="text-sm text-slate-300/90">{body}</p>
+      {status && (
+        <div className={`mt-3 text-xs font-medium ${ACCENT_TEXT[accent]}`}>{status}</div>
+      )}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "With a friend" subview
+// ---------------------------------------------------------------------------
+
+interface DuoViewProps {
+  me: string;
+  party: PartyState | null;
+  inviteableFriends: string[];
+  usernames: Map<string, string>;
+  onlineUsers: Set<string>;
+  partyCode: string;
+  setPartyCode: (s: string) => void;
+  onBack: () => void;
+  onCreateParty: () => void;
+  onLeaveParty: () => void;
+  onJoinPartyByCode: (e: FormEvent) => void;
+  onInviteFriend: (uid: string) => void;
+  onQueueDuo: () => void;
+  busy: boolean;
+}
+
+function DuoView(props: DuoViewProps) {
+  const {
+    me, party, inviteableFriends, usernames, onlineUsers,
+    partyCode, setPartyCode,
+    onBack, onCreateParty, onLeaveParty, onJoinPartyByCode,
+    onInviteFriend, onQueueDuo, busy,
+  } = props;
+
+  const ready = party && party.members.length === 2;
+  const isLeader = party?.leader_id === me;
+
+  return (
+    <div className="space-y-5">
+      <SubHeader title="With a friend" subtitle="Ranked duo" onBack={onBack} accent="violet" />
+
+      {!party && (
+        <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-5 space-y-4">
+          <p className="text-slate-300">
+            Start a party — your friend can join by pressing <span className="font-medium">Accept</span> on the invite,
+            or by pasting the 6-letter code you'll get.
+          </p>
+          <button
+            onClick={onCreateParty}
+            disabled={busy}
+            className="rounded bg-violet-600 hover:bg-violet-500 px-4 py-2 disabled:opacity-50"
+          >
+            Create party
+          </button>
+          <div className="pt-3 border-t border-slate-700">
+            <p className="text-xs text-slate-400 mb-2">Already have a code from a friend?</p>
+            <form onSubmit={onJoinPartyByCode} className="flex gap-2 max-w-sm">
               <input
                 value={partyCode}
                 onChange={(e) => setPartyCode(e.target.value.toUpperCase())}
@@ -280,34 +460,181 @@ export function Lobby() {
                 disabled={busy || partyCode.trim().length !== 6}
                 className="rounded border border-slate-600 hover:bg-slate-700 px-4 py-2 disabled:opacity-50"
               >
-                Join party
+                Join
               </button>
             </form>
           </div>
-        )}
-      </section>
+        </div>
+      )}
 
-      <section>
-        <h2 className="text-lg font-semibold mb-3">Join private room with code</h2>
-        <form onSubmit={onJoinRoom} className="flex gap-2 max-w-sm">
-          <input
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-            placeholder="6-letter code"
-            maxLength={6}
-            className="flex-1 rounded border border-slate-600 bg-slate-900 px-3 py-2 uppercase tracking-widest"
-          />
+      {party && (
+        <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-5 space-y-4">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-xs text-slate-400 uppercase tracking-wider">Your party</p>
+              <p className="text-lg font-medium">
+                {party.members.length}/2 — {ready ? 'ready to queue' : 'waiting for partner'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="text-xl font-mono tracking-widest text-violet-300">{party.invite_code}</code>
+              <button
+                onClick={() => navigator.clipboard.writeText(party.invite_code)}
+                className="rounded border border-slate-600 px-2 py-1 text-xs hover:bg-slate-700"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+
+          <ul className="space-y-1 text-sm">
+            {party.members.map((m) => (
+              <li key={m.user_id} className="flex items-center gap-2">
+                <span className="font-medium">{m.username}</span>
+                {m.user_id === party.leader_id && <span className="text-amber-300 text-xs">leader</span>}
+                {m.user_id === me && <span className="text-emerald-400 text-xs">(you)</span>}
+              </li>
+            ))}
+          </ul>
+
+          {ready && (
+            <button
+              onClick={onQueueDuo}
+              disabled={busy || !isLeader}
+              title={isLeader ? '' : 'Only the party leader can queue'}
+              className="w-full rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-3 font-semibold text-lg disabled:opacity-50"
+            >
+              {isLeader ? 'Queue ranked duo' : 'Waiting for leader to queue'}
+            </button>
+          )}
+
+          {!ready && isLeader && inviteableFriends.length > 0 && (
+            <div>
+              <p className="text-xs text-slate-400 mb-2">Invite a friend</p>
+              <ul className="space-y-1">
+                {inviteableFriends.slice(0, 8).map((uid) => {
+                  const isOnline = onlineUsers.has(uid);
+                  return (
+                    <li key={uid} className="flex items-center justify-between rounded border border-slate-700 bg-slate-900/40 px-3 py-1.5 text-sm">
+                      <span className="flex items-center gap-2">
+                        <span className={`inline-block h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                        {usernames.get(uid) ?? uid.slice(0, 8)}
+                      </span>
+                      <button
+                        onClick={() => onInviteFriend(uid)}
+                        disabled={busy || !isOnline}
+                        className="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs disabled:opacity-50"
+                      >
+                        Invite
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {!ready && !isLeader && (
+            <p className="text-sm text-slate-400">Waiting on the leader to invite or queue.</p>
+          )}
+
+          {!ready && isLeader && inviteableFriends.length === 0 && (
+            <p className="text-sm text-slate-400">
+              No friends to invite. <Link to="/friends" className="underline hover:text-slate-200">Add a friend</Link> first,
+              or share the code <code className="font-mono">{party.invite_code}</code>.
+            </p>
+          )}
+
           <button
-            type="submit"
-            disabled={busy || joinCode.trim().length !== 6}
-            className="rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-2 disabled:opacity-50"
+            onClick={onLeaveParty}
+            disabled={busy}
+            className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1 text-sm disabled:opacity-50"
           >
-            Join
+            Leave party
           </button>
-        </form>
-      </section>
+        </div>
+      )}
+    </div>
+  );
+}
 
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+// ---------------------------------------------------------------------------
+// Private room subview
+// ---------------------------------------------------------------------------
+
+interface PrivateViewProps {
+  joinCode: string;
+  setJoinCode: (s: string) => void;
+  onBack: () => void;
+  onCreateRoom: () => void;
+  onJoinRoom: (e: FormEvent) => void;
+  busy: boolean;
+}
+
+function PrivateView({ joinCode, setJoinCode, onBack, onCreateRoom, onJoinRoom, busy }: PrivateViewProps) {
+  return (
+    <div className="space-y-5">
+      <SubHeader title="Private room" subtitle="Casual with friends" onBack={onBack} accent="sky" />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-5 space-y-3">
+          <h3 className="text-lg font-semibold">Create a room</h3>
+          <p className="text-sm text-slate-400">
+            You'll get a 6-letter code. Share it with up to 3 friends. Empty seats can be filled with bots.
+          </p>
+          <button
+            onClick={onCreateRoom}
+            disabled={busy}
+            className="w-full rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 disabled:opacity-50"
+          >
+            Create room
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-5 space-y-3">
+          <h3 className="text-lg font-semibold">Join with code</h3>
+          <p className="text-sm text-slate-400">Got a 6-letter code from a friend?</p>
+          <form onSubmit={onJoinRoom} className="flex gap-2">
+            <input
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              placeholder="6-letter code"
+              maxLength={6}
+              className="flex-1 rounded border border-slate-600 bg-slate-900 px-3 py-2 uppercase tracking-widest"
+            />
+            <button
+              type="submit"
+              disabled={busy || joinCode.trim().length !== 6}
+              className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 disabled:opacity-50"
+            >
+              Join
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared subheader
+// ---------------------------------------------------------------------------
+
+function SubHeader({
+  title, subtitle, onBack, accent,
+}: { title: string; subtitle: string; onBack: () => void; accent: keyof typeof ACCENT_TEXT }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 flex-wrap">
+      <div>
+        <button
+          onClick={onBack}
+          className="text-xs text-slate-400 hover:text-slate-200 mb-1"
+        >
+          ← Back
+        </button>
+        <h2 className={`text-2xl font-bold ${ACCENT_TEXT[accent]}`}>{title}</h2>
+        <p className="text-xs text-slate-400 uppercase tracking-wider">{subtitle}</p>
+      </div>
     </div>
   );
 }
