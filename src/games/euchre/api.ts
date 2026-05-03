@@ -77,6 +77,8 @@ export const euchreApi = {
       'accept-party-invite',
       { invite_id },
     ),
+  declineInvite: (kind: 'game' | 'party', invite_id: string) =>
+    invoke<{ ok: true; already_gone?: boolean }>('decline-invite', { kind, invite_id }),
   resumeControl: (game_id: string) =>
     invoke<{ ok: true; was_bot: boolean }>('resume-control', { game_id }),
   createBotGame: () => invoke<{ game_id: string }>('create-bot-game', {}),

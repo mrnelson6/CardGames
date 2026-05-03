@@ -177,8 +177,21 @@ export interface Database {
         Insert: Pick<PartyInviteRow, 'from_user' | 'to_user' | 'party_id' | 'invite_code'>;
         Update: Partial<PartyInviteRow>;
       };
+      notifications: {
+        Row: NotificationRow;
+        Insert: Pick<NotificationRow, 'user_id' | 'kind'> & Partial<Pick<NotificationRow, 'payload'>>;
+        Update: Partial<NotificationRow>;
+      };
     };
   };
+}
+
+export interface NotificationRow {
+  id: string;
+  user_id: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface GameInviteRow {

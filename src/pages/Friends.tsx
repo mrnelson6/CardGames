@@ -264,8 +264,19 @@ export function Friends() {
     setBusy(true);
     setError(null);
     try {
+      const haveOwnParty = partyState?.is_leader === true;
+      if (!haveOwnParty) {
+        // No party yet (or not the leader): spin one up first.
+        try { await euchreApi.createParty(); }
+        catch (e) {
+          if (!(e instanceof Error && /already/i.test(e.message))) throw e;
+        }
+      }
       const r = await euchreApi.inviteToParty(toUser);
       flash(r.already_member ? 'Already in your party.' : 'Party invite sent.');
+      // Drop the user into the duo subview so they can see the party
+      // assemble once their friend accepts.
+      navigate('/', { state: { view: 'duo' } });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -285,8 +296,6 @@ export function Friends() {
       setBusy(false);
     }
   };
-
-  const canInvite = partyState !== null && partyState.is_leader && partyState.member_count < 2;
 
   return (
     <div className="min-h-full p-6 max-w-2xl mx-auto">
@@ -415,15 +424,14 @@ export function Friends() {
                     >
                       Invite to game
                     </button>
-                    {canInvite && (
-                      <button
-                        onClick={() => inviteToParty(other)}
-                        disabled={busy}
-                        className="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-sm disabled:opacity-50"
-                      >
-                        Invite to party
-                      </button>
-                    )}
+                    <button
+                      onClick={() => inviteToParty(other)}
+                      disabled={busy || !isOnline}
+                      title={isOnline ? 'Invite to a ranked-duo party' : 'Friend is offline'}
+                      className="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 text-sm disabled:opacity-50"
+                    >
+                      Invite to party
+                    </button>
                     <button
                       onClick={() => removeRow('friendships', { user_a: f.user_a, user_b: f.user_b })}
                       disabled={busy}

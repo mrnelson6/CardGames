@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { subscribeWithReconnect } from '../lib/realtime';
 import { useAuth } from '../lib/auth';
@@ -24,10 +24,17 @@ type View = 'hub' | 'duo' | 'private';
 export function Lobby() {
   const { session } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const me = session?.user.id ?? null;
   const onlineUsers = usePresence();
 
-  const [view, setView] = useState<View>('hub');
+  // Initial view honours navigate(... { state: { view: 'duo' } }) so other
+  // pages (e.g. Friends → Invite to party) can deep-link straight into
+  // the duo subview.
+  const [view, setView] = useState<View>(() => {
+    const v = (location.state as { view?: View } | null)?.view;
+    return v === 'duo' || v === 'private' || v === 'hub' ? v : 'hub';
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,65 +45,65 @@ export function Lobby() {
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [usernames, setUsernames] = useState<Map<string, string>>(new Map());
 
+  const loadParty = useCallback(async () => {
+    if (!me) return;
+    const { data: membership } = await supabase
+      .from('party_members')
+      .select('party_id')
+      .eq('user_id', me)
+      .maybeSingle();
+    if (!membership) { setParty(null); return; }
+    const pid = (membership as { party_id: string }).party_id;
+    const { data: p } = await supabase
+      .from('parties')
+      .select('id, invite_code, leader_id')
+      .eq('id', pid)
+      .maybeSingle();
+    if (!p) { setParty(null); return; }
+    const { data: members } = await supabase
+      .from('party_members')
+      .select('user_id')
+      .eq('party_id', pid);
+    const memberIds = ((members ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
+    const { data: profs } = await supabase
+      .from('profiles')
+      .select('user_id, username')
+      .in('user_id', memberIds);
+    const profByUid = new Map<string, string>();
+    for (const r of (profs ?? []) as Pick<ProfileRow, 'user_id' | 'username'>[]) {
+      profByUid.set(r.user_id, r.username);
+    }
+    const partyRow = p as { id: string; invite_code: string; leader_id: string };
+    setParty({
+      party_id: partyRow.id,
+      invite_code: partyRow.invite_code,
+      leader_id: partyRow.leader_id,
+      members: memberIds.map((uid) => ({
+        user_id: uid,
+        username: profByUid.get(uid) ?? uid.slice(0, 8),
+      })),
+    });
+  }, [me]);
+
   // Party state + realtime.
   useEffect(() => {
     if (!me) return;
-    let cancelled = false;
-    const load = async () => {
-      const { data: membership } = await supabase
-        .from('party_members')
-        .select('party_id')
-        .eq('user_id', me)
-        .maybeSingle();
-      if (cancelled) return;
-      if (!membership) { setParty(null); return; }
-      const pid = (membership as { party_id: string }).party_id;
-      const { data: p } = await supabase
-        .from('parties')
-        .select('id, invite_code, leader_id')
-        .eq('id', pid)
-        .maybeSingle();
-      if (cancelled || !p) return;
-      const { data: members } = await supabase
-        .from('party_members')
-        .select('user_id')
-        .eq('party_id', pid);
-      const memberIds = ((members ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
-      const { data: profs } = await supabase
-        .from('profiles')
-        .select('user_id, username')
-        .in('user_id', memberIds);
-      const profByUid = new Map<string, string>();
-      for (const r of (profs ?? []) as Pick<ProfileRow, 'user_id' | 'username'>[]) {
-        profByUid.set(r.user_id, r.username);
-      }
-      const partyRow = p as { id: string; invite_code: string; leader_id: string };
-      setParty({
-        party_id: partyRow.id,
-        invite_code: partyRow.invite_code,
-        leader_id: partyRow.leader_id,
-        members: memberIds.map((uid) => ({
-          user_id: uid,
-          username: profByUid.get(uid) ?? uid.slice(0, 8),
-        })),
-      });
-    };
-    load();
+    void loadParty();
     const unsub = subscribeWithReconnect({
       channel: `lobby-party-${me}`,
       configure: (ch) =>
         ch.on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'party_members' },
-          () => load(),
+          () => { void loadParty(); },
         ).on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'parties' },
-          () => load(),
+          () => { void loadParty(); },
         ),
     });
-    return () => { cancelled = true; unsub(); };
-  }, [me]);
+    return () => { unsub(); };
+  }, [me, loadParty]);
 
   // Auto-navigate when our party leader queues us.
   useEffect(() => {
@@ -188,18 +195,45 @@ export function Lobby() {
     });
   };
 
-  const onCreateParty = () => wrap(async () => { await euchreApi.createParty(); });
-  const onLeaveParty = () => wrap(async () => { await euchreApi.leaveParty(); });
+  const onCreateParty = () => wrap(async () => {
+    await euchreApi.createParty();
+    // Realtime should also catch this, but reload right away so the UI
+    // flips even when the broadcast is a beat behind.
+    await loadParty();
+  });
+  const onLeaveParty = () => wrap(async () => {
+    await euchreApi.leaveParty();
+    await loadParty();
+  });
   const onJoinPartyByCode = (e: FormEvent) => {
     e.preventDefault();
     if (!partyCode.trim()) return;
     wrap(async () => {
       await euchreApi.joinParty(partyCode.trim().toUpperCase());
       setPartyCode('');
+      await loadParty();
     });
   };
   const onInviteFriend = (toUser: string) =>
     wrap(async () => { await euchreApi.inviteToParty(toUser); });
+  // Convenience: in one click, create a party (if missing) and invite a
+  // specific friend into it. Used from the duo-view "no party yet"
+  // friends list and from the Friends page.
+  const onStartPartyWith = (toUser: string) =>
+    wrap(async () => {
+      let havePartyAsLeader = !!party && party.leader_id === me;
+      if (!havePartyAsLeader) {
+        try { await euchreApi.createParty(); }
+        catch (e) {
+          // Idempotent fallback: if we somehow already had a party, just
+          // continue to the invite step.
+          if (!(e instanceof Error && /already/i.test(e.message))) throw e;
+        }
+        await loadParty();
+        havePartyAsLeader = true;
+      }
+      await euchreApi.inviteToParty(toUser);
+    });
 
   const onCreateBotGame = () =>
     wrap(async () => {
@@ -253,6 +287,7 @@ export function Lobby() {
         <DuoView
           me={me!}
           party={party}
+          friendIds={friendIds}
           inviteableFriends={inviteableFriends}
           usernames={usernames}
           onlineUsers={onlineUsers}
@@ -263,6 +298,7 @@ export function Lobby() {
           onLeaveParty={onLeaveParty}
           onJoinPartyByCode={onJoinPartyByCode}
           onInviteFriend={onInviteFriend}
+          onStartPartyWith={onStartPartyWith}
           onQueueDuo={onQueueDuo}
           busy={busy}
         />
@@ -403,6 +439,7 @@ function ModeCard({
 interface DuoViewProps {
   me: string;
   party: PartyState | null;
+  friendIds: string[];
   inviteableFriends: string[];
   usernames: Map<string, string>;
   onlineUsers: Set<string>;
@@ -413,20 +450,29 @@ interface DuoViewProps {
   onLeaveParty: () => void;
   onJoinPartyByCode: (e: FormEvent) => void;
   onInviteFriend: (uid: string) => void;
+  onStartPartyWith: (uid: string) => void;
   onQueueDuo: () => void;
   busy: boolean;
 }
 
 function DuoView(props: DuoViewProps) {
   const {
-    me, party, inviteableFriends, usernames, onlineUsers,
+    me, party, friendIds, inviteableFriends, usernames, onlineUsers,
     partyCode, setPartyCode,
     onBack, onCreateParty, onLeaveParty, onJoinPartyByCode,
-    onInviteFriend, onQueueDuo, busy,
+    onInviteFriend, onStartPartyWith, onQueueDuo, busy,
   } = props;
 
   const ready = party && party.members.length === 2;
   const isLeader = party?.leader_id === me;
+
+  // Sort friends so online ones surface first; alphabetical inside each group.
+  const sortedFriends = friendIds.slice().sort((a, b) => {
+    const ao = onlineUsers.has(a) ? 0 : 1;
+    const bo = onlineUsers.has(b) ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    return (usernames.get(a) ?? a).localeCompare(usernames.get(b) ?? b);
+  });
 
   return (
     <div className="space-y-5">
@@ -435,34 +481,83 @@ function DuoView(props: DuoViewProps) {
       {!party && (
         <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-5 space-y-4">
           <p className="text-slate-300">
-            Start a party — your friend can join by pressing <span className="font-medium">Accept</span> on the invite,
-            or by pasting the 6-letter code you'll get.
+            Pick a friend below to start a party with them — they'll get an
+            invite popup. Or start an empty party and invite later.
           </p>
-          <button
-            onClick={onCreateParty}
-            disabled={busy}
-            className="rounded bg-violet-600 hover:bg-violet-500 px-4 py-2 disabled:opacity-50"
-          >
-            Create party
-          </button>
-          <div className="pt-3 border-t border-slate-700">
-            <p className="text-xs text-slate-400 mb-2">Already have a code from a friend?</p>
-            <form onSubmit={onJoinPartyByCode} className="flex gap-2 max-w-sm">
-              <input
-                value={partyCode}
-                onChange={(e) => setPartyCode(e.target.value.toUpperCase())}
-                placeholder="party code"
-                maxLength={6}
-                className="flex-1 rounded border border-slate-600 bg-slate-900 px-3 py-2 uppercase tracking-widest"
-              />
-              <button
-                type="submit"
-                disabled={busy || partyCode.trim().length !== 6}
-                className="rounded border border-slate-600 hover:bg-slate-700 px-4 py-2 disabled:opacity-50"
-              >
-                Join
-              </button>
-            </form>
+
+          {sortedFriends.length > 0 ? (
+            <div>
+              <p className="text-xs text-slate-400 uppercase tracking-wider mb-2">
+                Your friends
+              </p>
+              <ul className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                {sortedFriends.map((uid) => {
+                  const isOnline = onlineUsers.has(uid);
+                  return (
+                    <li
+                      key={uid}
+                      className="flex items-center justify-between rounded border border-slate-700 bg-slate-900/40 px-3 py-1.5 text-sm"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span
+                          className={`inline-block h-2 w-2 rounded-full ${
+                            isOnline ? 'bg-emerald-400' : 'bg-slate-600'
+                          }`}
+                        />
+                        <span className="font-medium">
+                          {usernames.get(uid) ?? uid.slice(0, 8)}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {isOnline ? 'online' : 'offline'}
+                        </span>
+                      </span>
+                      <button
+                        onClick={() => onStartPartyWith(uid)}
+                        disabled={busy || !isOnline}
+                        title={isOnline ? 'Start a party and invite this friend' : 'Friend is offline'}
+                        className="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs disabled:opacity-50"
+                      >
+                        Start party
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400">
+              No friends yet — <Link to="/friends" className="underline hover:text-slate-200">add some</Link>{' '}
+              first, then come back here.
+            </p>
+          )}
+
+          <div className="pt-3 border-t border-slate-700 flex flex-col gap-3">
+            <button
+              onClick={onCreateParty}
+              disabled={busy}
+              className="self-start rounded border border-violet-600 hover:bg-violet-600/20 px-4 py-2 text-sm disabled:opacity-50"
+            >
+              Create empty party
+            </button>
+            <div>
+              <p className="text-xs text-slate-400 mb-2">Have a code from a friend?</p>
+              <form onSubmit={onJoinPartyByCode} className="flex gap-2 max-w-sm">
+                <input
+                  value={partyCode}
+                  onChange={(e) => setPartyCode(e.target.value.toUpperCase())}
+                  placeholder="party code"
+                  maxLength={6}
+                  className="flex-1 rounded border border-slate-600 bg-slate-900 px-3 py-2 uppercase tracking-widest"
+                />
+                <button
+                  type="submit"
+                  disabled={busy || partyCode.trim().length !== 6}
+                  className="rounded border border-slate-600 hover:bg-slate-700 px-4 py-2 disabled:opacity-50"
+                >
+                  Join
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       )}

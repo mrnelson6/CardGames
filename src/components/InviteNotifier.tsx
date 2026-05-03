@@ -1,6 +1,7 @@
 // App-level toast that listens for incoming game and party invitations
-// and offers Accept / Decline. Mounted in App.tsx so it works on every
-// authenticated page.
+// (and one-shot notifications like "X declined your invite") and offers
+// Accept / Decline. Mounted in App.tsx so it works on every authenticated
+// page.
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -8,7 +9,12 @@ import { supabase } from '../lib/supabase';
 import { subscribeWithReconnect } from '../lib/realtime';
 import { useAuth } from '../lib/auth';
 import { euchreApi } from '../games/euchre/api';
-import type { GameInviteRow, PartyInviteRow, ProfileRow } from '../lib/database.types';
+import type {
+  GameInviteRow,
+  NotificationRow,
+  PartyInviteRow,
+  ProfileRow,
+} from '../lib/database.types';
 
 type Kind = 'game' | 'party';
 interface Invite {
@@ -16,11 +22,15 @@ interface Invite {
   id: string;
   from_user: string;
   from_username: string | null;
-  // Game-only:
   game_id?: string;
   game_invite_code?: string;
-  // Party-only:
   party_id?: string;
+}
+
+interface Notice {
+  id: string;
+  text: string;
+  ts: number; // for auto-dismiss
 }
 
 export function InviteNotifier() {
@@ -28,9 +38,11 @@ export function InviteNotifier() {
   const me = session?.user.id ?? null;
   const navigate = useNavigate();
   const [invites, setInvites] = useState<Invite[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Invites subscription.
   useEffect(() => {
     if (!me) { setInvites([]); return; }
 
@@ -106,9 +118,59 @@ export function InviteNotifier() {
     return () => { unsubGame(); unsubParty(); };
   }, [me]);
 
+  // Notifications subscription (decline notices etc).
+  useEffect(() => {
+    if (!me) { setNotices([]); return; }
+
+    const onRow = (row: NotificationRow) => {
+      const text = renderNotificationText(row);
+      if (!text) return;
+      setNotices((prev) => [...prev, { id: row.id, text, ts: Date.now() }]);
+      // Auto-clean from server too so we don't accumulate stale rows.
+      void supabase.from('notifications').delete().eq('id', row.id);
+    };
+
+    // Pull anything that arrived while we were offline / on a different page.
+    void supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', me)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        for (const r of (data ?? []) as NotificationRow[]) onRow(r);
+      });
+
+    const unsub = subscribeWithReconnect({
+      channel: `notifs-${me}`,
+      configure: (ch) =>
+        ch.on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${me}` },
+          (payload) => onRow(payload.new as NotificationRow),
+        ),
+    });
+    return () => { unsub(); };
+  }, [me]);
+
+  // Auto-dismiss notification toasts after 5s.
+  useEffect(() => {
+    if (notices.length === 0) return;
+    const timer = setInterval(() => {
+      const cutoff = Date.now() - 5000;
+      setNotices((prev) => {
+        const next = prev.filter((n) => n.ts > cutoff);
+        return next.length === prev.length ? prev : next;
+      });
+    }, 500);
+    return () => clearInterval(timer);
+  }, [notices.length]);
+
   const accept = async (inv: Invite) => {
     setBusyId(inv.id);
     setError(null);
+    // Close the toast immediately — even if the network call is slow,
+    // the user has already made their choice.
+    setInvites((prev) => prev.filter((i) => i.id !== inv.id));
     try {
       if (inv.kind === 'game') {
         const r = await euchreApi.acceptGameInvite(inv.id);
@@ -128,10 +190,9 @@ export function InviteNotifier() {
   const decline = async (inv: Invite) => {
     setBusyId(inv.id);
     setError(null);
+    setInvites((prev) => prev.filter((i) => i.id !== inv.id));
     try {
-      const table = inv.kind === 'game' ? 'game_invites' : 'party_invites';
-      const { error: dErr } = await supabase.from(table).delete().eq('id', inv.id);
-      if (dErr) throw new Error(dErr.message);
+      await euchreApi.declineInvite(inv.kind, inv.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -139,7 +200,7 @@ export function InviteNotifier() {
     }
   };
 
-  if (!me || (invites.length === 0 && !error)) return null;
+  if (!me || (invites.length === 0 && notices.length === 0 && !error)) return null;
 
   return (
     <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
@@ -148,6 +209,21 @@ export function InviteNotifier() {
           {error}
         </div>
       )}
+      {notices.map((n) => (
+        <div
+          key={n.id}
+          className="rounded-lg bg-slate-800 border border-slate-600 p-3 shadow-xl text-sm flex items-start gap-3"
+        >
+          <span className="flex-1">{n.text}</span>
+          <button
+            onClick={() => setNotices((prev) => prev.filter((x) => x.id !== n.id))}
+            className="text-slate-400 hover:text-slate-200 text-lg leading-none"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      ))}
       {invites.map((inv) => (
         <div
           key={`${inv.kind}-${inv.id}`}
@@ -182,4 +258,20 @@ export function InviteNotifier() {
       ))}
     </div>
   );
+}
+
+function renderNotificationText(row: NotificationRow): string | null {
+  const name =
+    typeof row.payload === 'object' && row.payload !== null && 'from_username' in row.payload
+      ? String((row.payload as { from_username?: unknown }).from_username ?? '')
+      : '';
+  const who = name || 'A friend';
+  switch (row.kind) {
+    case 'game_invite_declined':
+      return `${who} declined your game invite.`;
+    case 'party_invite_declined':
+      return `${who} declined your party invite.`;
+    default:
+      return null;
+  }
 }
