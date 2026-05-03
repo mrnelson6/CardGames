@@ -456,7 +456,7 @@ export function EuchreGamePage() {
         </div>
       )}
 
-      <div className="flex-1 min-h-0 relative grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 bg-felt-dark p-2 sm:p-4 rounded-2xl">
+      <div className="flex-1 min-h-0 relative grid grid-cols-3 grid-rows-[auto_minmax(0,1fr)_auto] gap-1.5 sm:gap-3 bg-felt-dark p-2 sm:p-4 rounded-2xl">
         {([0, 1, 2, 3] as Seat[]).map((seat) => {
           const p = players.find((pp) => pp.seat === seat);
           const username = p?.user_id ? usernames.get(p.user_id) ?? '…' : 'open';
@@ -484,35 +484,68 @@ export function EuchreGamePage() {
                 </span>
               </div>
               {isMe ? (
-                <div className="flex flex-wrap gap-1">
-                  {myCards.length === 0 ? (
-                    <span className="text-xs text-slate-500 italic">empty</span>
-                  ) : (
-                    <AnimatePresence>
-                      {myCards.map((c) => (
-                        <motion.div
-                          key={c}
-                          initial={{ opacity: 0, scale: 0.85 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.85, y: -28 }}
-                          transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-                        >
-                          <CardButton
-                            card={c}
-                            legal={phase === 'play' ? legalForMe.includes(c) : true}
-                            onClick={
-                              phase === 'play' && isMyTurn && legalForMe.includes(c)
-                                ? () => onPlay(c)()
-                                : phase === 'discard' && isMyTurn
-                                ? () => onDiscard(c)()
-                                : undefined
-                            }
-                          />
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
+                <>
+                  {/* Bid panel sits inline above your hand when it's your
+                      bidding turn — keeps the action on the table near
+                      where you'd expect it. Play/discard don't need a
+                      prompt since the cards themselves indicate intent. */}
+                  {isMyTurn && phase === 'bid_round_1' && eu.upcard && (
+                    <div className="mb-2">
+                      <BidPanel
+                        round={1}
+                        upcardSuit={suitOf(eu.upcard)}
+                        isDealer={mySeat === eu.dealer_seat}
+                        onPass={() => onPass()}
+                        onOrderUp={(alone) => onOrderUp(alone)()}
+                      />
+                    </div>
                   )}
-                </div>
+                  {isMyTurn && phase === 'bid_round_2' && eu.upcard && (
+                    <div className="mb-2">
+                      <BidPanel
+                        round={2}
+                        excludedSuit={suitOf(eu.upcard)}
+                        isDealer={mySeat === eu.dealer_seat}
+                        onPass={() => onPass()}
+                        onCall={(suit, alone) => onCallTrump(suit, alone)()}
+                      />
+                    </div>
+                  )}
+                  {isMyTurn && phase === 'discard' && (
+                    <div className="mb-2 text-xs text-slate-300">
+                      Click a card to discard.
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1">
+                    {myCards.length === 0 ? (
+                      <span className="text-xs text-slate-500 italic">empty</span>
+                    ) : (
+                      <AnimatePresence>
+                        {myCards.map((c) => (
+                          <motion.div
+                            key={c}
+                            initial={{ opacity: 0, scale: 0.85 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.85, y: -28 }}
+                            transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                          >
+                            <CardButton
+                              card={c}
+                              legal={phase === 'play' ? legalForMe.includes(c) : true}
+                              onClick={
+                                phase === 'play' && isMyTurn && legalForMe.includes(c)
+                                  ? () => onPlay(c)()
+                                  : phase === 'discard' && isMyTurn
+                                  ? () => onDiscard(c)()
+                                  : undefined
+                              }
+                            />
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    )}
+                  </div>
+                </>
               ) : (
                 <div className="flex">
                   {cardCount === 0 ? (
@@ -565,16 +598,9 @@ export function EuchreGamePage() {
             completed={
               recentTrick && recentTrick.handNumber === eu.hand_number ? recentTrick : null
             }
+            upcard={eu.upcard_status !== 'taken' ? eu.upcard : null}
+            upcardStatus={eu.upcard_status}
           />
-          <AnimatePresence>
-            {eu.upcard && eu.upcard_status !== 'taken' && (
-              <UpcardDisplay
-                key={eu.upcard}
-                card={eu.upcard}
-                status={eu.upcard_status ?? 'face_up'}
-              />
-            )}
-          </AnimatePresence>
           </div>
         </div>
 
@@ -592,40 +618,6 @@ export function EuchreGamePage() {
         </div>
       </div>
 
-      {/* Action strip pinned at the bottom of the screen. Slim — bidding
-          still gets a multi-button panel; play/discard/waiting collapse
-          to a single line. */}
-      <div className="flex-shrink-0 mt-2">
-        {phase === 'bid_round_1' && eu.upcard && isMyTurn && mySeat !== null ? (
-          <BidPanel
-            round={1}
-            upcardSuit={suitOf(eu.upcard)}
-            isDealer={mySeat === eu.dealer_seat}
-            onPass={() => onPass()}
-            onOrderUp={(alone) => onOrderUp(alone)()}
-          />
-        ) : phase === 'bid_round_2' && eu.upcard && isMyTurn && mySeat !== null ? (
-          <BidPanel
-            round={2}
-            excludedSuit={suitOf(eu.upcard)}
-            isDealer={mySeat === eu.dealer_seat}
-            onPass={() => onPass()}
-            onCall={(suit, alone) => onCallTrump(suit, alone)()}
-          />
-        ) : phase === 'discard' && isMyTurn && mySeat !== null ? (
-          <p className="rounded bg-slate-800/90 px-3 py-1.5 text-sm">
-            Click a card in your hand to discard.
-          </p>
-        ) : phase === 'play' && isMyTurn ? (
-          <p className="rounded bg-slate-800/90 px-3 py-1.5 text-sm">
-            Your turn — click a highlighted card.
-          </p>
-        ) : (
-          <p className="rounded bg-slate-800/90 px-3 py-1.5 text-sm text-slate-400">
-            Waiting on {usernames.get(players.find((p) => p.seat === game.current_seat)?.user_id ?? '') ?? `seat ${game.current_seat}`}…
-          </p>
-        )}
-      </div>
     </div>
   );
 }
@@ -644,16 +636,21 @@ function TrickArea({
   usernames,
   players,
   completed,
+  upcard,
+  upcardStatus,
 }: {
   plays: TrickPlayRow[];
   mySeat: Seat | null;
   usernames: Map<string, string>;
   players: GamePlayerRow[];
   completed: { plays: TrickPlayRow[]; winnerSeat: number | null } | null;
+  upcard: Card | null;
+  upcardStatus: 'face_up' | 'turned_down' | 'taken' | null;
 }) {
   const showing = plays.length > 0 ? plays : completed?.plays ?? [];
   const winnerSeat = plays.length > 0 ? null : completed?.winnerSeat ?? null;
   const isCompletedView = plays.length === 0 && !!completed;
+  const showUpcard = showing.length === 0 && upcard !== null;
   const winnerName = (() => {
     if (winnerSeat === null) return null;
     const p = players.find((pp) => pp.seat === winnerSeat);
@@ -685,7 +682,14 @@ function TrickArea({
 
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="grid grid-cols-3 grid-rows-3 w-40 h-40 sm:w-48 sm:h-48">
+      <div className="relative grid grid-cols-3 grid-rows-3 w-40 h-40 sm:w-48 sm:h-48">
+        {showUpcard && (
+          <div className="col-start-2 row-start-2 place-self-center">
+            <div className={upcardStatus === 'turned_down' ? 'opacity-50 grayscale' : ''}>
+              <CardButton card={upcard!} legal={upcardStatus === 'face_up'} />
+            </div>
+          </div>
+        )}
         <AnimatePresence>
           {showing.map((p) => {
             const offset = offsetFor(p.seat);
@@ -718,21 +722,6 @@ function TrickArea({
         {winnerName ? `won by ${winnerName}` : ''}
       </div>
     </div>
-  );
-}
-
-function UpcardDisplay({ card, status }: { card: Card; status: 'face_up' | 'turned_down' | 'taken' }) {
-  return (
-    <motion.div
-      className="flex flex-col items-center"
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.85 }}
-      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-    >
-      <span className="text-[10px] text-slate-300 uppercase">{status.replace('_', ' ')}</span>
-      <CardButton card={card} legal={status === 'face_up'} />
-    </motion.div>
   );
 }
 
