@@ -21,11 +21,12 @@ Deno.serve(async (req) => {
 
   const admin = adminClient();
 
-  const { data: membership } = await admin
+  const { data: memberships } = await admin
     .from('party_members')
     .select('party_id')
     .eq('user_id', user.id)
-    .maybeSingle();
+    .limit(1);
+  const membership = (memberships ?? [])[0];
   if (!membership) return json({ ok: true, was_in_party: false });
 
   const { data: party } = await admin
@@ -43,16 +44,21 @@ Deno.serve(async (req) => {
   await admin.from('mm_queue').delete().eq('party_id', party.id);
 
   if (party.leader_id === user.id) {
-    // Disband: cascade deletes party_members.
+    // Disband: cascade deletes party_members for this party.
     const { error } = await admin.from('parties').delete().eq('id', party.id);
     if (error) return fail(500, 'db_disband', error.message);
+    // Belt-and-suspenders: nuke any other stray rows for this user too.
+    await admin.from('party_members').delete().eq('user_id', user.id);
     return json({ ok: true, disbanded: true });
   }
 
+  // Plain leave: clear every party_members row for this user, not just
+  // the one we identified above. A user is only ever supposed to be in
+  // one party; if they somehow got into a state with multiple, this
+  // resets them cleanly.
   const { error } = await admin
     .from('party_members')
     .delete()
-    .eq('party_id', party.id)
     .eq('user_id', user.id);
   if (error) return fail(500, 'db_leave', error.message);
   return json({ ok: true, disbanded: false });

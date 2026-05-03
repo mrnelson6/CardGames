@@ -47,11 +47,14 @@ export function Lobby() {
 
   const loadParty = useCallback(async () => {
     if (!me) return;
-    const { data: membership } = await supabase
+    // limit(1) instead of maybeSingle() so a leftover orphan party_members
+    // row from a previous failure doesn't break the whole lobby.
+    const { data: memberships } = await supabase
       .from('party_members')
       .select('party_id')
       .eq('user_id', me)
-      .maybeSingle();
+      .limit(1);
+    const membership = (memberships ?? [])[0];
     if (!membership) { setParty(null); return; }
     const pid = (membership as { party_id: string }).party_id;
     const { data: p } = await supabase

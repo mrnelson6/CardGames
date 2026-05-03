@@ -61,12 +61,13 @@ export function Friends() {
     if (!me) return;
     let cancelled = false;
     const refreshParty = async () => {
-      const { data: membership } = await supabase
+      const { data: memberships } = await supabase
         .from('party_members')
         .select('party_id')
         .eq('user_id', me)
-        .maybeSingle();
+        .limit(1);
       if (cancelled) return;
+      const membership = (memberships ?? [])[0];
       if (!membership) { setPartyState(null); return; }
       const pid = (membership as { party_id: string }).party_id;
       const { data: p } = await supabase

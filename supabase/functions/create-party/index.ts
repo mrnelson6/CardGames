@@ -24,12 +24,15 @@ Deno.serve(async (req) => {
 
   const admin = adminClient();
 
-  // If already in a party as a member, return that one (idempotent-ish).
-  const { data: existing } = await admin
+  // If already in a party, return that one (idempotent-ish). Use limit(1)
+  // not maybeSingle() so a stale duplicate row from a previous failure
+  // doesn't make the whole call error out.
+  const { data: existingRows } = await admin
     .from('party_members')
     .select('party_id')
     .eq('user_id', user.id)
-    .maybeSingle();
+    .limit(1);
+  const existing = (existingRows ?? [])[0];
   if (existing) {
     const { data: p } = await admin
       .from('parties')
@@ -39,6 +42,11 @@ Deno.serve(async (req) => {
     if (p) {
       return json({ party_id: p.id, invite_code: p.invite_code, leader_id: p.leader_id, already_in_party: true });
     }
+    // Existing row points at a deleted party. Clear all stale party_members
+    // rows for this user before creating the new one — otherwise the
+    // (party_id, user_id) PK would still let us insert, but lobby reads
+    // that don't expect multiple rows would break.
+    await admin.from('party_members').delete().eq('user_id', user.id);
   }
 
   let attempt = 0;

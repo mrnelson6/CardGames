@@ -8,8 +8,33 @@ interface ApiError {
 async function invoke<T>(fn: string, body: object): Promise<T> {
   const { data, error } = await supabase.functions.invoke<T | ApiError>(fn, { body });
   if (error) {
-    const ctx = (data as ApiError | null)?.error;
-    throw new Error(ctx ? `${ctx.code}: ${ctx.message}` : error.message);
+    // supabase-js v2's FunctionsHttpError leaves `data` null on non-2xx
+    // responses; the original Response is on error.context. Pull the
+    // structured `{error: {code, message}}` body out of there so the
+    // user sees the real reason instead of "non-2xx status code".
+    let detail: string | null = null;
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.clone === 'function') {
+      try {
+        const parsed = (await ctx.clone().json()) as ApiError | unknown;
+        const inner = (parsed as ApiError | null)?.error;
+        if (inner?.code && inner?.message) {
+          detail = `${inner.code}: ${inner.message}`;
+        } else if (typeof parsed === 'string' && parsed.length > 0) {
+          detail = parsed;
+        }
+      } catch {
+        try {
+          const text = await ctx.clone().text();
+          if (text) detail = text.slice(0, 300);
+        } catch { /* give up */ }
+      }
+    }
+    if (!detail) {
+      const fromData = (data as ApiError | null)?.error;
+      if (fromData?.code) detail = `${fromData.code}: ${fromData.message}`;
+    }
+    throw new Error(detail ?? error.message);
   }
   if (data && typeof data === 'object' && 'error' in (data as object)) {
     const ctx = (data as ApiError).error;
