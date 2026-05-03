@@ -47,14 +47,40 @@ Deno.serve(async (req) => {
     return fail(410, 'party_gone', 'That party no longer exists');
   }
 
-  // Caller must not already belong to a different party.
-  const { data: existing } = await admin
+  // If the caller is already in a different party, swap them out of it.
+  // - If they led that party, disband it (cascade removes the other
+  //   member and any pending invites).
+  // - Otherwise just drop their membership row.
+  // Tolerates orphan rows pointing at a deleted party.
+  const { data: existingRows } = await admin
     .from('party_members')
     .select('party_id')
     .eq('user_id', user.id)
-    .maybeSingle();
-  if (existing && existing.party_id !== party.id) {
-    return fail(409, 'in_other_party', 'Leave your current party first');
+    .limit(5);
+  for (const row of (existingRows ?? []) as Array<{ party_id: string }>) {
+    if (row.party_id === party.id) continue;
+    const { data: oldParty } = await admin
+      .from('parties')
+      .select('id, leader_id')
+      .eq('id', row.party_id)
+      .maybeSingle();
+    if (!oldParty) {
+      await admin
+        .from('party_members')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('party_id', row.party_id);
+    } else if (oldParty.leader_id === user.id) {
+      // Drop matchmaking ticket if any, then disband.
+      await admin.from('mm_queue').delete().eq('party_id', oldParty.id);
+      await admin.from('parties').delete().eq('id', oldParty.id);
+    } else {
+      await admin
+        .from('party_members')
+        .delete()
+        .eq('party_id', oldParty.id)
+        .eq('user_id', user.id);
+    }
   }
 
   const { data: members } = await admin

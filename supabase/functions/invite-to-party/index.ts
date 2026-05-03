@@ -59,14 +59,9 @@ Deno.serve(async (req) => {
   }
   if (memberIds.length >= 2) return fail(409, 'party_full', 'Party is full');
 
-  const { data: other } = await admin
-    .from('party_members')
-    .select('party_id')
-    .eq('user_id', body.to_user)
-    .maybeSingle();
-  if (other && other.party_id !== party.id) {
-    return fail(409, 'friend_in_party', 'They are already in another party');
-  }
+  // Note: we deliberately do NOT block invites to friends who are already
+  // in another party. The recipient gets the invite and chooses; on
+  // accept, accept-party-invite swaps them out of their current party.
 
   // Create or refresh the pending invite row.
   const { data: invite, error: invErr } = await admin
