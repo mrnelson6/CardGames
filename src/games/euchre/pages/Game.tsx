@@ -408,15 +408,15 @@ export function EuchreGamePage() {
   }
 
   return (
-    <div className="min-h-full p-2 sm:p-3 max-w-5xl mx-auto">
-      <header className="flex items-center justify-between mb-3">
+    <div className="h-[100dvh] flex flex-col p-2 sm:p-3 max-w-5xl mx-auto overflow-hidden">
+      <header className="flex-shrink-0 flex items-center justify-between mb-2">
         <div>
-          <h1 className="text-xl font-bold">Euchre</h1>
+          <h1 className="text-base sm:text-xl font-bold leading-tight">Euchre</h1>
           <p className="text-xs text-slate-400">
-            Hand {eu.hand_number} · Phase: <span className="text-slate-200">{phase}</span>
+            Hand {eu.hand_number} · {phase}
             {trump && <> · Trump <span className="text-slate-200">{SUIT_LABEL[trump]}</span></>}
             {eu.alone_seat !== null && (
-              <> · Alone: <span className="text-amber-300">seat {eu.alone_seat}</span></>
+              <> · Alone</>
             )}
           </p>
         </div>
@@ -429,10 +429,7 @@ export function EuchreGamePage() {
                 if (game.current_seat === null) return;
                 euchreApi
                   .enforceTimeout(game.id, game.current_seat, deadline)
-                  .catch(() => {
-                    // Swallow — multiple clients may race; only one wins, the
-                    // rest get acted=false. Realtime delivers the new state.
-                  });
+                  .catch(() => {});
               }}
             />
           )}
@@ -441,25 +438,25 @@ export function EuchreGamePage() {
       </header>
 
       {error && (
-        <div className="mb-3 rounded bg-red-900/50 border border-red-700 p-2 text-sm text-red-200">
+        <div className="flex-shrink-0 mb-2 rounded bg-red-900/50 border border-red-700 p-2 text-sm text-red-200">
           {error}
         </div>
       )}
 
       {meIsBot && (
-        <div className="mb-3 rounded bg-amber-900/40 border border-amber-700 p-3 text-sm flex items-center justify-between gap-3 flex-wrap">
-          <span>A bot is playing your seat after missed turns.</span>
+        <div className="flex-shrink-0 mb-2 rounded bg-amber-900/40 border border-amber-700 p-2 text-sm flex items-center justify-between gap-3 flex-wrap">
+          <span>A bot is playing your seat.</span>
           <button
             onClick={() => onResume()}
             disabled={busy}
             className="rounded bg-amber-500 hover:bg-amber-400 text-slate-900 px-3 py-1 font-medium disabled:opacity-50"
           >
-            Resume control
+            Resume
           </button>
         </div>
       )}
 
-      <div className="grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 bg-felt-dark p-2 sm:p-4 rounded-2xl">
+      <div className="flex-1 min-h-0 relative grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 bg-felt-dark p-2 sm:p-4 rounded-2xl">
         {([0, 1, 2, 3] as Seat[]).map((seat) => {
           const p = players.find((pp) => pp.seat === seat);
           const username = p?.user_id ? usernames.get(p.user_id) ?? '…' : 'open';
@@ -580,48 +577,54 @@ export function EuchreGamePage() {
           </AnimatePresence>
           </div>
         </div>
+
+        {/* Score overlay in the top-right corner of the felt — keeps it
+            visible without taking a separate row below the table. */}
+        <div className="absolute top-2 right-2 z-20 pointer-events-none">
+          <ScorePanel
+            team0={game.team0_score}
+            team1={game.team1_score}
+            trumpSuit={trump ? SUIT_LABEL[trump] : undefined}
+            makerTeam={eu.maker_seat !== null ? teamOf(eu.maker_seat) : undefined}
+            myTeam={mySeat !== null ? teamOf(mySeat) : undefined}
+            tricks={trump !== null ? { team0: tricksTeam0, team1: tricksTeam1 } : undefined}
+          />
+        </div>
       </div>
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
-        <div>
-          {phase === 'bid_round_1' && eu.upcard && isMyTurn && mySeat !== null && (
-            <BidPanel
-              round={1}
-              upcardSuit={suitOf(eu.upcard)}
-              isDealer={mySeat === eu.dealer_seat}
-              onPass={() => onPass()}
-              onOrderUp={(alone) => onOrderUp(alone)()}
-            />
-          )}
-          {phase === 'bid_round_2' && eu.upcard && isMyTurn && mySeat !== null && (
-            <BidPanel
-              round={2}
-              excludedSuit={suitOf(eu.upcard)}
-              isDealer={mySeat === eu.dealer_seat}
-              onPass={() => onPass()}
-              onCall={(suit, alone) => onCallTrump(suit, alone)()}
-            />
-          )}
-          {phase === 'discard' && isMyTurn && mySeat !== null && (
-            <p className="rounded bg-slate-800/90 p-3 text-sm">Click a card in your hand to discard.</p>
-          )}
-          {phase === 'play' && isMyTurn && (
-            <p className="rounded bg-slate-800/90 p-3 text-sm">Your turn — click a highlighted card.</p>
-          )}
-          {!isMyTurn && (
-            <p className="rounded bg-slate-800/90 p-3 text-sm text-slate-400">
-              Waiting on {usernames.get(players.find((p) => p.seat === game.current_seat)?.user_id ?? '') ?? `seat ${game.current_seat}`}…
-            </p>
-          )}
-        </div>
-        <ScorePanel
-          team0={game.team0_score}
-          team1={game.team1_score}
-          trumpSuit={trump ? SUIT_LABEL[trump] : undefined}
-          makerTeam={eu.maker_seat !== null ? teamOf(eu.maker_seat) : undefined}
-          myTeam={mySeat !== null ? teamOf(mySeat) : undefined}
-          tricks={trump !== null ? { team0: tricksTeam0, team1: tricksTeam1 } : undefined}
-        />
+      {/* Action strip pinned at the bottom of the screen. Slim — bidding
+          still gets a multi-button panel; play/discard/waiting collapse
+          to a single line. */}
+      <div className="flex-shrink-0 mt-2">
+        {phase === 'bid_round_1' && eu.upcard && isMyTurn && mySeat !== null ? (
+          <BidPanel
+            round={1}
+            upcardSuit={suitOf(eu.upcard)}
+            isDealer={mySeat === eu.dealer_seat}
+            onPass={() => onPass()}
+            onOrderUp={(alone) => onOrderUp(alone)()}
+          />
+        ) : phase === 'bid_round_2' && eu.upcard && isMyTurn && mySeat !== null ? (
+          <BidPanel
+            round={2}
+            excludedSuit={suitOf(eu.upcard)}
+            isDealer={mySeat === eu.dealer_seat}
+            onPass={() => onPass()}
+            onCall={(suit, alone) => onCallTrump(suit, alone)()}
+          />
+        ) : phase === 'discard' && isMyTurn && mySeat !== null ? (
+          <p className="rounded bg-slate-800/90 px-3 py-1.5 text-sm">
+            Click a card in your hand to discard.
+          </p>
+        ) : phase === 'play' && isMyTurn ? (
+          <p className="rounded bg-slate-800/90 px-3 py-1.5 text-sm">
+            Your turn — click a highlighted card.
+          </p>
+        ) : (
+          <p className="rounded bg-slate-800/90 px-3 py-1.5 text-sm text-slate-400">
+            Waiting on {usernames.get(players.find((p) => p.seat === game.current_seat)?.user_id ?? '') ?? `seat ${game.current_seat}`}…
+          </p>
+        )}
       </div>
     </div>
   );
