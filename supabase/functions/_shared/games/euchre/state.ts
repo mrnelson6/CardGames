@@ -33,6 +33,7 @@ export interface FullGame {
   turn_deadline: string | null;
   invite_code: string | null;
   leader_id: string | null;
+  turn_seconds: number | null;
 }
 
 export interface EuchreRow {
@@ -132,7 +133,8 @@ export function inSeat(players: PlayerRow[], userId: string): PlayerRow | null {
   return players.find((p) => p.user_id === userId) ?? null;
 }
 
-export function deadlineNowPlus(secs: number = TURN_SECONDS): string {
+export function deadlineNowPlus(secs: number | null = TURN_SECONDS): string | null {
+  if (secs === null || secs <= 0) return null;
   return new Date(Date.now() + secs * 1000).toISOString();
 }
 
@@ -140,7 +142,7 @@ export interface DealOutput {
   hands: HandRow[];          // shaped for upsert into game_hands
   euchre: Partial<EuchreRow>; // dealer/upcard/etc.
   current_seat: number;
-  turn_deadline: string;
+  turn_deadline: string | null;
 }
 
 export function buildDealForHand(
@@ -148,6 +150,7 @@ export function buildDealForHand(
   players: PlayerRow[],
   dealer: Seat,
   handNumber: number,
+  turnSeconds: number | null = TURN_SECONDS,
 ): DealOutput {
   const { hands, upcard } = dealEuchre();
   const handsRows: HandRow[] = players.map((p) => ({
@@ -172,7 +175,7 @@ export function buildDealForHand(
       current_trick_id: null,
     },
     current_seat: firstSeat,
-    turn_deadline: deadlineNowPlus(),
+    turn_deadline: deadlineNowPlus(turnSeconds),
   };
 }
 

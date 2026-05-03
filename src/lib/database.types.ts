@@ -18,6 +18,7 @@ export interface GameRow {
   turn_deadline: string | null;
   invite_code: string | null;
   leader_id: string | null;
+  turn_seconds: number | null;
   created_at: string;
   updated_at: string;
 }

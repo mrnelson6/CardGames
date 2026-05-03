@@ -24,7 +24,6 @@ import {
 } from '../_shared/games/euchre/euchre.ts';
 import {
   HAND_END_PAUSE_MS,
-  TURN_SECONDS,
   buildDealForHand,
   deadlineNowPlus,
   loadCurrentTrick,
@@ -166,7 +165,7 @@ Deno.serve(async (req) => {
     const next = nextSeat(seat, alone);
     const { error: gErr } = await admin
       .from('games')
-      .update({ current_seat: next, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+      .update({ current_seat: next, turn_deadline: deadlineNowPlus(game.turn_seconds) })
       .eq('id', body.game_id);
     if (gErr) return fail(500, 'db_game_update', gErr.message);
     await autoAdvanceBots(admin, body.game_id);
@@ -202,7 +201,7 @@ Deno.serve(async (req) => {
   if (!handDone) {
     const { error: gErr } = await admin
       .from('games')
-      .update({ current_seat: winner, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+      .update({ current_seat: winner, turn_deadline: deadlineNowPlus(game.turn_seconds) })
       .eq('id', body.game_id);
     if (gErr) return fail(500, 'db_game_update', gErr.message);
     await autoAdvanceBots(admin, body.game_id);
@@ -291,7 +290,7 @@ async function resolveHand(
 
   // Deal next hand.
   const nextDealer = ((dealer + 1) % 4) as Seat;
-  const deal = buildDealForHand(gameId, players, nextDealer, handNumber + 1);
+  const deal = buildDealForHand(gameId, players, nextDealer, handNumber + 1, game.turn_seconds);
 
   const { error: dHErr } = await admin.from('game_hands').upsert(deal.hands);
   if (dHErr) return fail(500, 'db_deal_hands', dHErr.message);

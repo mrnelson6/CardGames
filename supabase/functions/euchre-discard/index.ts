@@ -17,7 +17,6 @@ import {
   nextSeat,
 } from '../_shared/games/euchre/euchre.ts';
 import {
-  TURN_SECONDS,
   deadlineNowPlus,
   loadEuchreState,
   loadGame,
@@ -93,7 +92,7 @@ Deno.serve(async (req) => {
 
   const { error: gErr } = await admin
     .from('games')
-    .update({ current_seat: first, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+    .update({ current_seat: first, turn_deadline: deadlineNowPlus(game.turn_seconds) })
     .eq('id', body.game_id);
   if (gErr) return fail(500, 'db_game_update', gErr.message);
 

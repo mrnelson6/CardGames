@@ -96,10 +96,28 @@ export const euchreApi = {
     invoke<{ ok: true }>('euchre-room-action', { game_id, op: 'remove_seat', seat }),
   roomSwapSeats: (game_id: string, seat_a: number, seat_b: number) =>
     invoke<{ ok: true }>('euchre-room-action', { game_id, op: 'swap_seats', seat_a, seat_b }),
-  roomStart: (game_id: string, opts?: { randomize?: boolean; fill_bots?: boolean }) =>
-    invoke<{ ok: true; status: string }>('euchre-room-action', {
-      game_id, op: 'start',
-      randomize: opts?.randomize ?? false,
-      fill_bots: opts?.fill_bots ?? false,
-    }),
+  roomStart: (
+    game_id: string,
+    opts?: {
+      randomize?: boolean;
+      fill_bots?: boolean;
+      /** seconds per turn; null = no time limit; omit to keep the room's default */
+      turn_seconds?: number | null;
+    },
+  ) =>
+    invoke<{ ok: true; status: string }>(
+      'euchre-room-action',
+      opts && Object.prototype.hasOwnProperty.call(opts, 'turn_seconds')
+        ? {
+            game_id, op: 'start',
+            randomize: opts?.randomize ?? false,
+            fill_bots: opts?.fill_bots ?? false,
+            turn_seconds: opts.turn_seconds ?? null,
+          }
+        : {
+            game_id, op: 'start',
+            randomize: opts?.randomize ?? false,
+            fill_bots: opts?.fill_bots ?? false,
+          },
+    ),
 };

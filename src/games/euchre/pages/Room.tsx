@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { subscribeWithReconnect } from '../../../lib/realtime';
@@ -14,6 +14,24 @@ interface SeatView {
   isMe: boolean;
 }
 
+// Viewer-relative offset → CSS placement in the 3x3 table grid.
+// 0 = south (me), 1 = west, 2 = north (partner), 3 = east.
+const SEAT_POSITION_FROM_VIEWPOINT: Record<number, string> = {
+  0: 'col-start-2 row-start-3',
+  1: 'col-start-1 row-start-2',
+  2: 'col-start-2 row-start-1',
+  3: 'col-start-3 row-start-2',
+};
+
+const TURN_TIME_OPTIONS: Array<{ value: number | null; label: string }> = [
+  { value: 15,   label: '15 seconds' },
+  { value: 30,   label: '30 seconds' },
+  { value: 45,   label: '45 seconds (default)' },
+  { value: 60,   label: '60 seconds' },
+  { value: 120,  label: '2 minutes' },
+  { value: null, label: 'No time limit' },
+];
+
 export function EuchreRoomPage() {
   const { code } = useParams();
   const { session } = useAuth();
@@ -25,6 +43,8 @@ export function EuchreRoomPage() {
   const [busy, setBusy] = useState(false);
   const [randomize, setRandomize] = useState(false);
   const [swapPick, setSwapPick] = useState<number | null>(null);
+  // Encode "no limit" as the string "null" so the <select> can carry it.
+  const [turnSecondsChoice, setTurnSecondsChoice] = useState<string>('45');
 
   useEffect(() => {
     if (!code || !session) return;
@@ -53,7 +73,6 @@ export function EuchreRoomPage() {
       if (playersResp.error) { setError(playersResp.error.message); return; }
       setPlayers(ps);
 
-      // Auto-join if I'm not seated.
       const meSeated = ps.some((p) => p.user_id === session.user.id);
       if (!meSeated && g.status === 'lobby' && ps.filter((p) => p.user_id || p.is_bot).length < 4) {
         setBusy(true);
@@ -140,16 +159,17 @@ export function EuchreRoomPage() {
     finally { setBusy(false); }
   };
 
-  const seatViews: SeatView[] = [0, 1, 2, 3].map((seat) => {
-    const p = players.find((p) => p.seat === seat);
-    return {
-      seat,
-      user_id: p?.user_id ?? null,
-      username: p?.user_id ? usernames.get(p.user_id) ?? '…' : null,
-      is_bot: p?.is_bot ?? false,
-      isMe: p?.user_id === session.user.id,
-    };
-  });
+  const seatViews: SeatView[] = useMemo(() =>
+    [0, 1, 2, 3].map((seat) => {
+      const p = players.find((p) => p.seat === seat);
+      return {
+        seat,
+        user_id: p?.user_id ?? null,
+        username: p?.user_id ? usernames.get(p.user_id) ?? '…' : null,
+        is_bot: p?.is_bot ?? false,
+        isMe: p?.user_id === session.user.id,
+      };
+    }), [players, usernames, session.user.id]);
 
   const filledCount = seatViews.filter((s) => s.user_id || s.is_bot).length;
   const leaderId = game?.leader_id
@@ -157,6 +177,12 @@ export function EuchreRoomPage() {
     ?? null;
   const isLeader = leaderId === session.user.id;
   const canStart = isLeader && filledCount === 4 && game?.status === 'lobby';
+
+  // Viewer's own seat (or 0 by default), so we rotate the table layout
+  // to put the viewer at the south position.
+  const mySeat = seatViews.find((s) => s.isMe)?.seat ?? 0;
+  const positionFor = (seat: number) =>
+    SEAT_POSITION_FROM_VIEWPOINT[((seat - mySeat + 4) % 4)];
 
   const onAddBot = (seat: number) =>
     wrap(async () => { if (game) await euchreApi.roomAddBot(game.id, seat); });
@@ -185,11 +211,13 @@ export function EuchreRoomPage() {
     });
   const onStart = () =>
     wrap(async () => {
-      if (game) await euchreApi.roomStart(game.id, { randomize });
+      if (!game) return;
+      const turn_seconds = turnSecondsChoice === 'null' ? null : Number(turnSecondsChoice);
+      await euchreApi.roomStart(game.id, { randomize, turn_seconds });
     });
 
   return (
-    <div className="min-h-full p-4 sm:p-6 max-w-3xl mx-auto">
+    <div className="min-h-full p-4 sm:p-6 max-w-4xl mx-auto">
       <header className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Euchre — Private Room</h1>
         <Link to="/" className="text-sm hover:underline">← Lobby</Link>
@@ -221,7 +249,7 @@ export function EuchreRoomPage() {
       </section>
 
       <section>
-        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+        <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
           <p className="text-sm text-slate-400">
             {filledCount}/4 seats filled
             {busy && ' · working…'}
@@ -229,34 +257,56 @@ export function EuchreRoomPage() {
           </p>
           {isLeader && swapPick !== null && (
             <p className="text-xs text-violet-300">
-              Pick another seat to swap with seat {swapPick} (or click seat {swapPick} to cancel)
+              Pick another seat to swap with seat {swapPick}
             </p>
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Table-shape layout: viewer at south (bottom), partner at north
+            (top), opponents east/west. Same arrangement as the in-game
+            table so partnerships match. */}
+        <div className="grid grid-cols-3 grid-rows-3 gap-3 aspect-[5/3] sm:aspect-[7/4] rounded-2xl bg-emerald-950/40 border border-emerald-900 p-3 sm:p-5">
           {seatViews.map((s) => (
-            <SeatCard
-              key={s.seat}
-              seat={s}
-              isLeader={isLeader}
-              isSwapPicked={swapPick === s.seat}
-              hasSwapPickPending={swapPick !== null}
-              busy={busy}
-              isLeaderSeat={s.user_id === leaderId}
-              onAddBot={() => onAddBot(s.seat)}
-              onRemove={() => onRemoveSeat(s.seat)}
-              onSwapClick={() => onSwapClick(s.seat)}
-            />
+            <div key={s.seat} className={`${positionFor(s.seat)} flex`}>
+              <SeatCard
+                seat={s}
+                isLeader={isLeader}
+                isSwapPicked={swapPick === s.seat}
+                hasSwapPickPending={swapPick !== null}
+                busy={busy}
+                isLeaderSeat={s.user_id === leaderId}
+              isPartner={s.seat !== mySeat && (s.seat % 2) === (mySeat % 2)}
+                onAddBot={() => onAddBot(s.seat)}
+                onRemove={() => onRemoveSeat(s.seat)}
+                onSwapClick={() => onSwapClick(s.seat)}
+              />
+            </div>
           ))}
+          <div className="col-start-2 row-start-2 flex items-center justify-center">
+            <span className="text-xs text-emerald-700 uppercase tracking-widest">Lobby</span>
+          </div>
         </div>
       </section>
 
       <section className="mt-6 rounded-lg border border-slate-700 bg-slate-800/60 p-4 space-y-3">
         {isLeader ? (
           <>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-xs text-slate-400">Turn time</span>
+                <select
+                  value={turnSecondsChoice}
+                  onChange={(e) => setTurnSecondsChoice(e.target.value)}
+                  className="rounded border border-slate-600 bg-slate-900 px-3 py-2"
+                >
+                  {TURN_TIME_OPTIONS.map((o) => (
+                    <option key={String(o.value)} value={o.value === null ? 'null' : String(o.value)}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer self-end pb-1">
                 <input
                   type="checkbox"
                   checked={randomize}
@@ -265,16 +315,16 @@ export function EuchreRoomPage() {
                 />
                 Randomize seats when starting
               </label>
-              {filledCount < 4 && (
-                <button
-                  onClick={onFillBots}
-                  disabled={busy}
-                  className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm disabled:opacity-50"
-                >
-                  Fill empty seats with bots
-                </button>
-              )}
             </div>
+            {filledCount < 4 && (
+              <button
+                onClick={onFillBots}
+                disabled={busy}
+                className="w-full rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm disabled:opacity-50"
+              >
+                Fill empty seats with bots
+              </button>
+            )}
             <button
               onClick={onStart}
               disabled={!canStart || busy}
@@ -300,6 +350,7 @@ function SeatCard({
   hasSwapPickPending,
   busy,
   isLeaderSeat,
+  isPartner,
   onAddBot,
   onRemove,
   onSwapClick,
@@ -310,41 +361,41 @@ function SeatCard({
   hasSwapPickPending: boolean;
   busy: boolean;
   isLeaderSeat: boolean;
+  isPartner: boolean;
   onAddBot: () => void;
   onRemove: () => void;
   onSwapClick: () => void;
 }) {
-  const team = seat.seat % 2;
   const empty = !seat.user_id && !seat.is_bot;
-  const teamColor = team === 0 ? 'border-l-emerald-500' : 'border-l-sky-500';
-  const ringClass = isSwapPicked ? 'ring-2 ring-violet-400' : seat.isMe ? 'ring-1 ring-emerald-500/70' : '';
+  const ringClass = isSwapPicked
+    ? 'ring-2 ring-violet-400'
+    : seat.isMe
+      ? 'ring-2 ring-emerald-400'
+      : isPartner
+        ? 'ring-1 ring-emerald-700'
+        : '';
 
   return (
     <div
-      className={`rounded-lg border border-slate-700 border-l-4 ${teamColor} bg-slate-800 p-3 ${ringClass}`}
+      className={`flex-1 min-w-0 rounded-lg border border-slate-700 bg-slate-800 p-3 ${ringClass} flex flex-col`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-xs text-slate-400">
-          Seat {seat.seat} · team {team}
-        </div>
-        {isLeaderSeat && (
-          <span className="text-[10px] uppercase tracking-wider text-amber-300">leader</span>
-        )}
+      <div className="flex items-center justify-between mb-1 text-[10px] uppercase tracking-wider text-slate-400">
+        <span>
+          {seat.isMe ? 'You' : isPartner ? 'Partner' : 'Opponent'}
+        </span>
+        {isLeaderSeat && <span className="text-amber-300">leader</span>}
       </div>
-      <div className="font-medium text-base">
+      <div className="font-medium text-base flex-1">
         {empty ? (
           <span className="text-slate-500 italic">empty</span>
         ) : seat.is_bot ? (
           <span className="text-slate-300">Bot</span>
         ) : (
-          <>
-            {seat.username}
-            {seat.isMe && <span className="ml-2 text-xs text-emerald-400">(you)</span>}
-          </>
+          <span className="break-words">{seat.username}</span>
         )}
       </div>
       {isLeader && (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {empty && (
             <button
               onClick={onAddBot}
@@ -360,22 +411,20 @@ function SeatCard({
               disabled={busy}
               className="rounded border border-slate-600 hover:bg-slate-700 px-2 py-1 text-xs disabled:opacity-50"
             >
-              {seat.is_bot ? 'Remove bot' : 'Kick'}
+              {seat.is_bot ? 'Remove' : 'Kick'}
             </button>
           )}
-          {!empty && (
-            <button
-              onClick={onSwapClick}
-              disabled={busy}
-              className={`rounded px-2 py-1 text-xs disabled:opacity-50 ${
-                isSwapPicked
-                  ? 'bg-violet-600 hover:bg-violet-500'
-                  : 'border border-slate-600 hover:bg-slate-700'
-              }`}
-            >
-              {isSwapPicked ? 'Cancel' : hasSwapPickPending ? 'Swap here' : 'Swap'}
-            </button>
-          )}
+          <button
+            onClick={onSwapClick}
+            disabled={busy}
+            className={`rounded px-2 py-1 text-xs disabled:opacity-50 ${
+              isSwapPicked
+                ? 'bg-violet-600 hover:bg-violet-500'
+                : 'border border-slate-600 hover:bg-slate-700'
+            }`}
+          >
+            {isSwapPicked ? 'Cancel' : hasSwapPickPending ? 'Swap here' : 'Swap'}
+          </button>
         </div>
       )}
     </div>

@@ -27,7 +27,14 @@ import type { Seat } from '../_shared/games/euchre/euchre.ts';
 interface BodyAddBot     { game_id: string; op: 'add_bot';     seat: number }
 interface BodyRemoveSeat { game_id: string; op: 'remove_seat'; seat: number }
 interface BodySwapSeats  { game_id: string; op: 'swap_seats';  seat_a: number; seat_b: number }
-interface BodyStart      { game_id: string; op: 'start';       randomize?: boolean; fill_bots?: boolean }
+interface BodyStart      {
+  game_id: string;
+  op: 'start';
+  randomize?: boolean;
+  fill_bots?: boolean;
+  /** Per-turn time limit in seconds. null = no limit. Omitted = leave at default 45. */
+  turn_seconds?: number | null;
+}
 type Body = BodyAddBot | BodyRemoveSeat | BodySwapSeats | BodyStart;
 
 function isSeat(n: unknown): n is number {
@@ -203,10 +210,21 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Resolve turn_seconds. Body field `null` → no limit; `undefined` → keep
+    // whatever's already on the games row (default 45). A positive integer
+    // overrides.
+    let effectiveTurnSeconds: number | null = game.turn_seconds;
+    if (Object.prototype.hasOwnProperty.call(body, 'turn_seconds')) {
+      effectiveTurnSeconds = body.turn_seconds ?? null;
+      if (typeof effectiveTurnSeconds === 'number' && effectiveTurnSeconds <= 0) {
+        return fail(400, 'bad_turn_seconds', 'turn_seconds must be > 0 or null');
+      }
+    }
+
     // Transition to playing + deal hand 1.
     const { data: started, error: tErr } = await admin
       .from('games')
-      .update({ status: 'playing' })
+      .update({ status: 'playing', turn_seconds: effectiveTurnSeconds })
       .eq('id', body.game_id)
       .eq('status', 'lobby')
       .select('id')
@@ -220,7 +238,7 @@ Deno.serve(async (req) => {
     // Re-pick a random dealer (the original was set at create time; refresh
     // in case seats were shuffled).
     const dealer = (Math.floor(Math.random() * 4)) as Seat;
-    const deal = buildDealForHand(body.game_id, current, dealer, 1);
+    const deal = buildDealForHand(body.game_id, current, dealer, 1, effectiveTurnSeconds);
 
     const { error: hErr } = await admin.from('game_hands').upsert(deal.hands);
     if (hErr) return fail(500, 'db_deal_hands', hErr.message);

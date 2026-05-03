@@ -18,7 +18,7 @@ import {
   suitOf,
 } from '../_shared/games/euchre/euchre.ts';
 import {
-  TURN_SECONDS,
+  type FullGame,
   deadlineNowPlus,
   loadEuchreState,
   loadGame,
@@ -74,12 +74,12 @@ Deno.serve(async (req) => {
     if (round === 2 && seat === dealer) {
       return fail(409, 'stick_the_dealer', 'Dealer cannot pass in round 2');
     }
-    return await handleBidProgression(admin, game.id, eu, seat, dealer, round);
+    return await handleBidProgression(admin, game, eu, seat, dealer, round);
   }
 
   if (body.action === 'order_up') {
     if (round !== 1) return fail(409, 'wrong_round', 'order_up only in round 1');
-    return await acceptBid(admin, game.id, eu, {
+    return await acceptBid(admin, game, eu, {
       maker: seat,
       alone: body.alone === true ? seat : null,
       trump: upcardSuit,
@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
     if (body.suit === upcardSuit) {
       return fail(409, 'suit_excluded', 'Cannot call trump matching the turned-down upcard');
     }
-    return await acceptBid(admin, game.id, eu, {
+    return await acceptBid(admin, game, eu, {
       maker: seat,
       alone: body.alone === true ? seat : null,
       trump: body.suit,
@@ -108,12 +108,13 @@ Deno.serve(async (req) => {
 
 async function handleBidProgression(
   admin: ReturnType<typeof adminClient>,
-  gameId: string,
+  game: FullGame,
   eu: Awaited<ReturnType<typeof loadEuchreState>> & object,
   seat: Seat,
   dealer: Seat,
   round: 1 | 2,
 ) {
+  const gameId = game.id;
   // count passes in this round = users seated between (dealer+1 round 1, dealer+1 round 2) and current.
   // Easier: derive "is this the last bidder?" — round 1 last bidder is the dealer; round 2 last bidder is also the dealer.
   // After dealer passes in round 1, advance to round 2 (turn upcard down).
@@ -130,7 +131,7 @@ async function handleBidProgression(
 
     const { error: gErr } = await admin
       .from('games')
-      .update({ current_seat: next, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+      .update({ current_seat: next, turn_deadline: deadlineNowPlus(game.turn_seconds) })
       .eq('id', gameId);
     if (gErr) return fail(500, 'db_game_update', gErr.message);
 
@@ -148,7 +149,7 @@ async function handleBidProgression(
   const next = ((seat + 1) % 4) as Seat;
   const { error: gErr } = await admin
     .from('games')
-    .update({ current_seat: next, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+    .update({ current_seat: next, turn_deadline: deadlineNowPlus(game.turn_seconds) })
     .eq('id', gameId);
   if (gErr) return fail(500, 'db_game_update', gErr.message);
 
@@ -171,10 +172,11 @@ interface AcceptBid {
 
 async function acceptBid(
   admin: ReturnType<typeof adminClient>,
-  gameId: string,
+  game: FullGame,
   eu: Awaited<ReturnType<typeof loadEuchreState>> & object,
   bid: AcceptBid,
 ) {
+  const gameId = game.id;
   const dealer = eu.dealer_seat as Seat;
 
   if (bid.goingToDiscard) {
@@ -211,7 +213,7 @@ async function acceptBid(
 
     const { error: gErr } = await admin
       .from('games')
-      .update({ current_seat: dealer, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+      .update({ current_seat: dealer, turn_deadline: deadlineNowPlus(game.turn_seconds) })
       .eq('id', gameId);
     if (gErr) return fail(500, 'db_game_update', gErr.message);
 
@@ -242,7 +244,7 @@ async function acceptBid(
 
   const { error: gErr } = await admin
     .from('games')
-    .update({ current_seat: first, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+    .update({ current_seat: first, turn_deadline: deadlineNowPlus(game.turn_seconds) })
     .eq('id', gameId);
   if (gErr) return fail(500, 'db_game_update', gErr.message);
 

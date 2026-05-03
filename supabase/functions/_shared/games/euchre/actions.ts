@@ -17,7 +17,6 @@ import {
 } from './euchre.ts';
 import {
   HAND_END_PAUSE_MS,
-  TURN_SECONDS,
   buildDealForHand,
   deadlineNowPlus,
   type EuchreRow,
@@ -42,6 +41,7 @@ export interface ActionResult {
 export async function passBid(
   admin: SupabaseClient,
   gameId: string,
+  game: FullGame,
   eu: EuchreRow,
   seat: Seat,
 ): Promise<ActionResult | { error: string }> {
@@ -63,7 +63,7 @@ export async function passBid(
 
     const g = await admin
       .from('games')
-      .update({ current_seat: next, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+      .update({ current_seat: next, turn_deadline: deadlineNowPlus(game.turn_seconds) })
       .eq('id', gameId);
     if (g.error) return { error: g.error.message };
 
@@ -79,7 +79,7 @@ export async function passBid(
   const next = ((seat + 1) % 4) as Seat;
   const g = await admin
     .from('games')
-    .update({ current_seat: next, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+    .update({ current_seat: next, turn_deadline: deadlineNowPlus(game.turn_seconds) })
     .eq('id', gameId);
   if (g.error) return { error: g.error.message };
 
@@ -109,6 +109,7 @@ export interface AcceptBidArgs {
 export async function acceptBid(
   admin: SupabaseClient,
   gameId: string,
+  game: FullGame,
   eu: EuchreRow,
   bid: AcceptBidArgs,
 ): Promise<ActionResult | { error: string }> {
@@ -145,7 +146,7 @@ export async function acceptBid(
 
     const g = await admin
       .from('games')
-      .update({ current_seat: dealer, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+      .update({ current_seat: dealer, turn_deadline: deadlineNowPlus(game.turn_seconds) })
       .eq('id', gameId);
     if (g.error) return { error: g.error.message };
 
@@ -175,7 +176,7 @@ export async function acceptBid(
 
   const g = await admin
     .from('games')
-    .update({ current_seat: first, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+    .update({ current_seat: first, turn_deadline: deadlineNowPlus(game.turn_seconds) })
     .eq('id', gameId);
   if (g.error) return { error: g.error.message };
 
@@ -193,6 +194,7 @@ export async function acceptBid(
 export async function dealerDiscard(
   admin: SupabaseClient,
   gameId: string,
+  game: FullGame,
   eu: EuchreRow,
   card: Card,
 ): Promise<ActionResult | { error: string }> {
@@ -228,7 +230,7 @@ export async function dealerDiscard(
 
   const g = await admin
     .from('games')
-    .update({ current_seat: first, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+    .update({ current_seat: first, turn_deadline: deadlineNowPlus(game.turn_seconds) })
     .eq('id', gameId);
   if (g.error) return { error: g.error.message };
 
@@ -341,7 +343,7 @@ export async function playCard(
     const next = nextSeat(seat, alone);
     const g = await admin
       .from('games')
-      .update({ current_seat: next, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+      .update({ current_seat: next, turn_deadline: deadlineNowPlus(game.turn_seconds) })
       .eq('id', gameId);
     if (g.error) return { error: g.error.message };
     return { ok: true, phase: 'play', current_seat: next };
@@ -373,7 +375,7 @@ export async function playCard(
   if (trickNumber < 5) {
     const g = await admin
       .from('games')
-      .update({ current_seat: winner, turn_deadline: deadlineNowPlus(TURN_SECONDS) })
+      .update({ current_seat: winner, turn_deadline: deadlineNowPlus(game.turn_seconds) })
       .eq('id', gameId);
     if (g.error) return { error: g.error.message };
     return { ok: true, phase: 'play', current_seat: winner };
@@ -460,7 +462,7 @@ async function resolveHandEnd(
 
   // Deal next hand.
   const nextDealer = ((dealer + 1) % 4) as Seat;
-  const deal = buildDealForHand(gameId, players, nextDealer, handNumber + 1);
+  const deal = buildDealForHand(gameId, players, nextDealer, handNumber + 1, game.turn_seconds);
 
   const dH = await admin.from('game_hands').upsert(deal.hands);
   if (dH.error) return { error: dH.error.message };

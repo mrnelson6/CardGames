@@ -52,7 +52,7 @@ export async function executeBotMove(
 
     if (round === 1) {
       if (shouldOrderUp(cards, upcardSuit)) {
-        return await acceptBid(admin, game.id, eu, {
+        return await acceptBid(admin, game.id, game, eu, {
           maker: seat,
           alone: null,
           trump: upcardSuit,
@@ -60,7 +60,7 @@ export async function executeBotMove(
         });
       }
       // Otherwise pass.
-      return await passBid(admin, game.id, eu, seat);
+      return await passBid(admin, game.id, game, eu, seat);
     }
 
     // Round 2: pick a non-upcard suit if we'd order up; else pass.
@@ -76,14 +76,14 @@ export async function executeBotMove(
     }
     // Stick the dealer is enforced by passBid — dealer cannot pass in round 2.
     if (seat === dealer || (bestSuit !== null && bestScore >= 3)) {
-      return await acceptBid(admin, game.id, eu, {
+      return await acceptBid(admin, game.id, game, eu, {
         maker: seat,
         alone: null,
         trump: bestSuit ?? candidateSuits[0],
         goingToDiscard: false,
       });
     }
-    return await passBid(admin, game.id, eu, seat);
+    return await passBid(admin, game.id, game, eu, seat);
   }
 
   // Discard phase.
@@ -99,7 +99,7 @@ export async function executeBotMove(
       .single();
     if (hErr) return { error: hErr.message };
     const card = pickBotDiscard(hand.cards as Card[], trump);
-    return await dealerDiscard(admin, game.id, eu, card);
+    return await dealerDiscard(admin, game.id, game, eu, card);
   }
 
   // Play phase.

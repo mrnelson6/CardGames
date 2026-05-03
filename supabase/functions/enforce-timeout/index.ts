@@ -52,6 +52,10 @@ Deno.serve(async (req) => {
   if (game.current_seat !== body.expected_seat) {
     return json({ ok: true, acted: false, reason: 'seat_moved' });
   }
+  // No-time-limit games never time out.
+  if (game.turn_deadline === null || game.turn_seconds === null) {
+    return json({ ok: true, acted: false, reason: 'no_deadline' });
+  }
   // Compare deadlines as numeric times (ms) — string equality fails because
   // Postgres returns microseconds while Date.toISOString() emits milliseconds.
   const dbDeadlineMs = Date.parse(game.turn_deadline);
