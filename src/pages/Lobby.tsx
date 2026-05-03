@@ -238,6 +238,12 @@ export function Lobby() {
       await euchreApi.inviteToParty(toUser);
     });
 
+  const onPartyBotGame = (opts: { turn_seconds: number | null; randomize: boolean }) =>
+    wrap(async () => {
+      const r = await euchreApi.startPartyBotGame(opts);
+      navigate(`/games/euchre/g/${r.game_id}`);
+    });
+
   const onCreateBotGame = () =>
     wrap(async () => {
       const r = await euchreApi.createBotGame();
@@ -303,6 +309,7 @@ export function Lobby() {
           onInviteFriend={onInviteFriend}
           onStartPartyWith={onStartPartyWith}
           onQueueDuo={onQueueDuo}
+          onPartyBotGame={onPartyBotGame}
           busy={busy}
         />
       )}
@@ -455,19 +462,42 @@ interface DuoViewProps {
   onInviteFriend: (uid: string) => void;
   onStartPartyWith: (uid: string) => void;
   onQueueDuo: () => void;
+  onPartyBotGame: (opts: { turn_seconds: number | null; randomize: boolean }) => void;
   busy: boolean;
 }
+
+const DUO_TURN_TIME_OPTIONS: Array<{ value: number | null; label: string }> = [
+  { value: 15,   label: '15 seconds' },
+  { value: 30,   label: '30 seconds' },
+  { value: 45,   label: '45 seconds (default)' },
+  { value: 60,   label: '60 seconds' },
+  { value: 120,  label: '2 minutes' },
+  { value: null, label: 'No time limit' },
+];
+
+// Seat slot used for the table-shape rendering. Same offset convention as
+// the in-game table: 0 south, 1 west, 2 north, 3 east.
+const DUO_SEAT_POSITION: Record<number, string> = {
+  0: 'col-start-2 row-start-3 place-self-center',
+  1: 'col-start-1 row-start-2 place-self-center',
+  2: 'col-start-2 row-start-1 place-self-center',
+  3: 'col-start-3 row-start-2 place-self-center',
+};
 
 function DuoView(props: DuoViewProps) {
   const {
     me, party, friendIds, inviteableFriends, usernames, onlineUsers,
     partyCode, setPartyCode,
     onBack, onCreateParty, onLeaveParty, onJoinPartyByCode,
-    onInviteFriend, onStartPartyWith, onQueueDuo, busy,
+    onInviteFriend, onStartPartyWith, onQueueDuo, onPartyBotGame, busy,
   } = props;
 
   const ready = party && party.members.length === 2;
   const isLeader = party?.leader_id === me;
+  const partner = party?.members.find((m) => m.user_id !== me) ?? null;
+  const myMember = party?.members.find((m) => m.user_id === me) ?? null;
+  const [turnChoice, setTurnChoice] = useState<string>('45');
+  const [randomize, setRandomize] = useState(false);
 
   // Sort friends so online ones surface first; alphabetical inside each group.
   const sortedFriends = friendIds.slice().sort((a, b) => {
@@ -566,92 +596,216 @@ function DuoView(props: DuoViewProps) {
       )}
 
       {party && (
-        <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-5 space-y-4">
-          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <div className="space-y-4">
+          {/* Header strip with code and status. */}
+          <div className="rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wider">Your party</p>
-              <p className="text-lg font-medium">
+              <p className="text-base font-medium">
                 {party.members.length}/2 — {ready ? 'ready to queue' : 'waiting for partner'}
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <code className="text-xl font-mono tracking-widest text-violet-300">{party.invite_code}</code>
+              <code className="text-lg font-mono tracking-widest text-violet-300">{party.invite_code}</code>
               <button
                 onClick={() => navigator.clipboard.writeText(party.invite_code)}
                 className="rounded border border-slate-600 px-2 py-1 text-xs hover:bg-slate-700"
               >
                 Copy
               </button>
+              <button
+                onClick={onLeaveParty}
+                disabled={busy}
+                className="rounded border border-slate-600 hover:bg-slate-700 px-2 py-1 text-xs disabled:opacity-50"
+              >
+                Leave party
+              </button>
             </div>
           </div>
 
-          <ul className="space-y-1 text-sm">
-            {party.members.map((m) => (
-              <li key={m.user_id} className="flex items-center gap-2">
-                <span className="font-medium">{m.username}</span>
-                {m.user_id === party.leader_id && <span className="text-amber-300 text-xs">leader</span>}
-                {m.user_id === me && <span className="text-emerald-400 text-xs">(you)</span>}
-              </li>
-            ))}
-          </ul>
-
-          {ready && (
-            <button
-              onClick={onQueueDuo}
-              disabled={busy || !isLeader}
-              title={isLeader ? '' : 'Only the party leader can queue'}
-              className="w-full rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-3 font-semibold text-lg disabled:opacity-50"
-            >
-              {isLeader ? 'Queue ranked duo' : 'Waiting for leader to queue'}
-            </button>
-          )}
-
-          {!ready && isLeader && inviteableFriends.length > 0 && (
-            <div>
-              <p className="text-xs text-slate-400 mb-2">Invite a friend</p>
-              <ul className="space-y-1">
-                {inviteableFriends.slice(0, 8).map((uid) => {
-                  const isOnline = onlineUsers.has(uid);
-                  return (
-                    <li key={uid} className="flex items-center justify-between rounded border border-slate-700 bg-slate-900/40 px-3 py-1.5 text-sm">
-                      <span className="flex items-center gap-2">
-                        <span className={`inline-block h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-                        {usernames.get(uid) ?? uid.slice(0, 8)}
-                      </span>
-                      <button
-                        onClick={() => onInviteFriend(uid)}
-                        disabled={busy || !isOnline}
-                        className="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs disabled:opacity-50"
-                      >
-                        Invite
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+          {/* Felt-table preview: you south, partner north, "?" opponents
+              east/west. Mirrors the in-game layout so the partnership
+              is visible. */}
+          <div className="grid grid-cols-3 grid-rows-3 gap-3 aspect-[5/3] sm:aspect-[7/4] rounded-2xl bg-emerald-950/40 border border-emerald-900 p-3 sm:p-5">
+            {/* South — you */}
+            <div className={DUO_SEAT_POSITION[0]}>
+              <DuoSeat
+                label={myMember?.username ?? 'You'}
+                role="You"
+                accent="emerald"
+                isLeader={party.leader_id === me}
+              />
             </div>
-          )}
+            {/* North — partner (or waiting slot) */}
+            <div className={DUO_SEAT_POSITION[2]}>
+              <DuoSeat
+                label={partner?.username ?? 'Waiting…'}
+                role="Partner"
+                accent="emerald"
+                isLeader={partner?.user_id === party.leader_id}
+                placeholder={!partner}
+              />
+            </div>
+            {/* West — opponent ?  */}
+            <div className={DUO_SEAT_POSITION[1]}>
+              <DuoSeat label="?" role="Opponent" accent="slate" placeholder />
+            </div>
+            {/* East — opponent ?  */}
+            <div className={DUO_SEAT_POSITION[3]}>
+              <DuoSeat label="?" role="Opponent" accent="slate" placeholder />
+            </div>
+            <div className="col-start-2 row-start-2 flex items-center justify-center">
+              <span className="text-xs text-emerald-700 uppercase tracking-widest text-center">
+                {ready ? 'Ready to play' : 'Lobby'}
+              </span>
+            </div>
+          </div>
 
-          {!ready && !isLeader && (
-            <p className="text-sm text-slate-400">Waiting on the leader to invite or queue.</p>
-          )}
+          {/* Action panel — leader-only when full */}
+          {ready ? (
+            <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-4 space-y-3">
+              {isLeader ? (
+                <>
+                  <button
+                    onClick={onQueueDuo}
+                    disabled={busy}
+                    className="w-full rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-3 font-semibold text-lg disabled:opacity-50"
+                  >
+                    Queue ranked duo
+                  </button>
 
-          {!ready && isLeader && inviteableFriends.length === 0 && (
-            <p className="text-sm text-slate-400">
-              No friends to invite. <Link to="/friends" className="underline hover:text-slate-200">Add a friend</Link> first,
-              or share the code <code className="font-mono">{party.invite_code}</code>.
-            </p>
-          )}
+                  <div className="pt-3 border-t border-slate-700 space-y-2">
+                    <p className="text-xs text-slate-400 uppercase tracking-wider">
+                      Or play now against bots
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-xs text-slate-400">Turn time</span>
+                        <select
+                          value={turnChoice}
+                          onChange={(e) => setTurnChoice(e.target.value)}
+                          className="rounded border border-slate-600 bg-slate-900 px-3 py-2"
+                        >
+                          {DUO_TURN_TIME_OPTIONS.map((o) => (
+                            <option
+                              key={String(o.value)}
+                              value={o.value === null ? 'null' : String(o.value)}
+                            >
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2 text-sm cursor-pointer self-end pb-1">
+                        <input
+                          type="checkbox"
+                          checked={randomize}
+                          onChange={(e) => setRandomize(e.target.checked)}
+                          className="h-4 w-4 accent-emerald-500"
+                        />
+                        Randomize seats
+                      </label>
+                    </div>
+                    <button
+                      onClick={() =>
+                        onPartyBotGame({
+                          turn_seconds: turnChoice === 'null' ? null : Number(turnChoice),
+                          randomize,
+                        })
+                      }
+                      disabled={busy}
+                      className="w-full rounded border border-amber-600 hover:bg-amber-600/20 text-amber-200 px-4 py-2 text-sm disabled:opacity-50"
+                    >
+                      Start bot game
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-slate-400 text-center">
+                  Waiting on {party.members.find((m) => m.user_id === party.leader_id)?.username ?? 'the leader'}{' '}
+                  to start the game.
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              {isLeader && inviteableFriends.length > 0 && (
+                <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-4">
+                  <p className="text-xs text-slate-400 uppercase tracking-wider mb-2">
+                    Invite a friend
+                  </p>
+                  <ul className="space-y-1">
+                    {inviteableFriends.slice(0, 8).map((uid) => {
+                      const isOnline = onlineUsers.has(uid);
+                      return (
+                        <li
+                          key={uid}
+                          className="flex items-center justify-between rounded border border-slate-700 bg-slate-900/40 px-3 py-1.5 text-sm"
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className={`inline-block h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                            {usernames.get(uid) ?? uid.slice(0, 8)}
+                          </span>
+                          <button
+                            onClick={() => onInviteFriend(uid)}
+                            disabled={busy || !isOnline}
+                            className="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs disabled:opacity-50"
+                          >
+                            Invite
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
 
-          <button
-            onClick={onLeaveParty}
-            disabled={busy}
-            className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1 text-sm disabled:opacity-50"
-          >
-            Leave party
-          </button>
+              {isLeader && inviteableFriends.length === 0 && (
+                <p className="text-sm text-slate-400">
+                  No friends to invite. <Link to="/friends" className="underline hover:text-slate-200">Add a friend</Link> first,
+                  or share the code <code className="font-mono">{party.invite_code}</code>.
+                </p>
+              )}
+
+              {!isLeader && (
+                <p className="text-sm text-slate-400">Waiting on the leader to invite or start.</p>
+              )}
+            </>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+function DuoSeat({
+  label,
+  role,
+  accent,
+  isLeader,
+  placeholder,
+}: {
+  label: string;
+  role: string;
+  accent: 'emerald' | 'slate';
+  isLeader?: boolean;
+  placeholder?: boolean;
+}) {
+  const ring =
+    accent === 'emerald'
+      ? 'border-emerald-500 bg-emerald-950/50'
+      : 'border-slate-600 bg-slate-900/40';
+  return (
+    <div
+      className={`min-w-[100px] sm:min-w-[140px] rounded-lg border-2 ${ring} px-3 py-2 text-center ${
+        placeholder ? 'opacity-60 italic' : ''
+      }`}
+    >
+      <div className="text-[10px] uppercase tracking-wider text-slate-400">{role}</div>
+      <div className="font-medium text-sm sm:text-base break-words">
+        {label}
+        {isLeader && <span className="text-amber-300 text-xs ml-1">★</span>}
+      </div>
     </div>
   );
 }

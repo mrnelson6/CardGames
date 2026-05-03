@@ -4,11 +4,14 @@ import { AppRoutes } from './routes';
 import { AuthProvider, useAuth } from './lib/auth';
 import { bindRealtimeAuth } from './lib/realtime';
 import { usePresenceTracker } from './lib/presence';
+import { useActiveGameRedirect } from './lib/useActiveGameRedirect';
 import { InviteNotifier } from './components/InviteNotifier';
 
 function AuthedShell() {
   const { session } = useAuth();
-  usePresenceTracker(session?.user.id ?? null);
+  const userId = session?.user.id ?? null;
+  usePresenceTracker(userId);
+  useActiveGameRedirect(userId);
   return (
     <>
       <AppRoutes />
