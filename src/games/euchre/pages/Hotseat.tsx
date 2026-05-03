@@ -70,11 +70,6 @@ export function EuchreHotseatPage() {
     return legalPlays(state.hands[currentSeat], state.ledCard, trump);
   }, [state, phase, currentSeat, trump]);
 
-  const dealerDiscardChoices: Card[] = useMemo(() => {
-    if (phase !== 'discard' || state.upcard === null) return [];
-    return [...state.hands[state.dealer], state.upcard];
-  }, [state, phase]);
-
   const tricksTeam0 = state.tricksWon[0];
   const tricksTeam1 = state.tricksWon[1];
 
