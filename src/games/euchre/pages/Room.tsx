@@ -10,6 +10,7 @@ interface SeatView {
   seat: number;
   user_id: string | null;
   username: string | null;
+  is_bot: boolean;
   isMe: boolean;
 }
 
@@ -22,13 +23,14 @@ export function EuchreRoomPage() {
   const [usernames, setUsernames] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [randomize, setRandomize] = useState(false);
+  const [swapPick, setSwapPick] = useState<number | null>(null);
 
   useEffect(() => {
     if (!code || !session) return;
     let cancelled = false;
 
     (async () => {
-      // Look up game by invite_code.
       const gameResp = await supabase
         .from('games')
         .select('*')
@@ -51,9 +53,9 @@ export function EuchreRoomPage() {
       if (playersResp.error) { setError(playersResp.error.message); return; }
       setPlayers(ps);
 
-      // Auto-join if I'm not seated and the room is still in lobby.
+      // Auto-join if I'm not seated.
       const meSeated = ps.some((p) => p.user_id === session.user.id);
-      if (!meSeated && g.status === 'lobby' && ps.length < 4) {
+      if (!meSeated && g.status === 'lobby' && ps.filter((p) => p.user_id || p.is_bot).length < 4) {
         setBusy(true);
         try {
           await euchreApi.joinRoom(code.toUpperCase());
@@ -68,7 +70,6 @@ export function EuchreRoomPage() {
     return () => { cancelled = true; };
   }, [code, session]);
 
-  // Realtime: game_players changes + games status flip.
   useEffect(() => {
     if (!game) return;
     const unsubPlayers = subscribeWithReconnect({
@@ -86,10 +87,7 @@ export function EuchreRoomPage() {
         ch.on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${game.id}` },
-          (payload) => {
-            const next = payload.new as GameRow;
-            setGame(next);
-          },
+          (payload) => setGame(payload.new as GameRow),
         ),
     });
     return () => {
@@ -107,7 +105,6 @@ export function EuchreRoomPage() {
     setPlayers(data ?? []);
   };
 
-  // Resolve usernames.
   useEffect(() => {
     const ids = players.map((p) => p.user_id).filter((u): u is string => u !== null);
     const missing = ids.filter((id) => !usernames.has(id));
@@ -128,7 +125,6 @@ export function EuchreRoomPage() {
       });
   }, [players]);
 
-  // Status flip → navigate to game page.
   useEffect(() => {
     if (game?.status === 'playing') {
       navigate(`/games/euchre/g/${game.id}`, { replace: true });
@@ -137,20 +133,63 @@ export function EuchreRoomPage() {
 
   if (!session) return <Navigate to="/login" replace />;
 
+  const wrap = async (fn: () => Promise<void>) => {
+    setBusy(true); setError(null);
+    try { await fn(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
   const seatViews: SeatView[] = [0, 1, 2, 3].map((seat) => {
     const p = players.find((p) => p.seat === seat);
     return {
       seat,
       user_id: p?.user_id ?? null,
       username: p?.user_id ? usernames.get(p.user_id) ?? '…' : null,
+      is_bot: p?.is_bot ?? false,
       isMe: p?.user_id === session.user.id,
     };
   });
 
-  const fullness = players.length;
+  const filledCount = seatViews.filter((s) => s.user_id || s.is_bot).length;
+  const leaderId = game?.leader_id
+    ?? players.find((p) => p.seat === 0)?.user_id
+    ?? null;
+  const isLeader = leaderId === session.user.id;
+  const canStart = isLeader && filledCount === 4 && game?.status === 'lobby';
+
+  const onAddBot = (seat: number) =>
+    wrap(async () => { if (game) await euchreApi.roomAddBot(game.id, seat); });
+  const onRemoveSeat = (seat: number) =>
+    wrap(async () => { if (game) await euchreApi.roomRemoveSeat(game.id, seat); });
+  const onSwapClick = (seat: number) => {
+    if (!isLeader) return;
+    if (swapPick === null) {
+      setSwapPick(seat);
+    } else if (swapPick === seat) {
+      setSwapPick(null);
+    } else {
+      const a = swapPick, b = seat;
+      setSwapPick(null);
+      wrap(async () => { if (game) await euchreApi.roomSwapSeats(game.id, a, b); });
+    }
+  };
+  const onFillBots = () =>
+    wrap(async () => {
+      if (!game) return;
+      for (const s of seatViews) {
+        if (!s.user_id && !s.is_bot) {
+          await euchreApi.roomAddBot(game.id, s.seat);
+        }
+      }
+    });
+  const onStart = () =>
+    wrap(async () => {
+      if (game) await euchreApi.roomStart(game.id, { randomize });
+    });
 
   return (
-    <div className="min-h-full p-6 max-w-2xl mx-auto">
+    <div className="min-h-full p-4 sm:p-6 max-w-3xl mx-auto">
       <header className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Euchre — Private Room</h1>
         <Link to="/" className="text-sm hover:underline">← Lobby</Link>
@@ -164,7 +203,7 @@ export function EuchreRoomPage() {
 
       <section className="mb-6 rounded-lg bg-slate-800 p-4">
         <p className="text-xs text-slate-400 mb-1">Invite code</p>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <code className="text-3xl font-mono tracking-widest text-emerald-300">{code}</code>
           <button
             onClick={() => navigator.clipboard.writeText(code ?? '')}
@@ -182,32 +221,163 @@ export function EuchreRoomPage() {
       </section>
 
       <section>
-        <p className="text-sm text-slate-400 mb-2">
-          {fullness < 4
-            ? `Waiting for ${4 - fullness} more player${fullness === 3 ? '' : 's'}…`
-            : 'Starting game…'}
-          {busy && ' (joining…)'}
-        </p>
-        <ul className="space-y-2">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <p className="text-sm text-slate-400">
+            {filledCount}/4 seats filled
+            {busy && ' · working…'}
+            {isLeader && <span className="ml-2 text-amber-300 text-xs">you're the leader</span>}
+          </p>
+          {isLeader && swapPick !== null && (
+            <p className="text-xs text-violet-300">
+              Pick another seat to swap with seat {swapPick} (or click seat {swapPick} to cancel)
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {seatViews.map((s) => (
-            <li
+            <SeatCard
               key={s.seat}
-              className={`flex items-center justify-between rounded border px-3 py-2 ${
-                s.isMe ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-700 bg-slate-800'
+              seat={s}
+              isLeader={isLeader}
+              isSwapPicked={swapPick === s.seat}
+              hasSwapPickPending={swapPick !== null}
+              busy={busy}
+              isLeaderSeat={s.user_id === leaderId}
+              onAddBot={() => onAddBot(s.seat)}
+              onRemove={() => onRemoveSeat(s.seat)}
+              onSwapClick={() => onSwapClick(s.seat)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-lg border border-slate-700 bg-slate-800/60 p-4 space-y-3">
+        {isLeader ? (
+          <>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={randomize}
+                  onChange={(e) => setRandomize(e.target.checked)}
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                Randomize seats when starting
+              </label>
+              {filledCount < 4 && (
+                <button
+                  onClick={onFillBots}
+                  disabled={busy}
+                  className="rounded border border-slate-600 hover:bg-slate-700 px-3 py-1.5 text-sm disabled:opacity-50"
+                >
+                  Fill empty seats with bots
+                </button>
+              )}
+            </div>
+            <button
+              onClick={onStart}
+              disabled={!canStart || busy}
+              className="w-full rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-3 font-semibold text-lg disabled:opacity-50"
+            >
+              {filledCount < 4 ? `Start game (need ${4 - filledCount} more)` : 'Start game'}
+            </button>
+          </>
+        ) : (
+          <p className="text-sm text-slate-400 text-center">
+            Waiting for the room leader to start the game…
+          </p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function SeatCard({
+  seat,
+  isLeader,
+  isSwapPicked,
+  hasSwapPickPending,
+  busy,
+  isLeaderSeat,
+  onAddBot,
+  onRemove,
+  onSwapClick,
+}: {
+  seat: SeatView;
+  isLeader: boolean;
+  isSwapPicked: boolean;
+  hasSwapPickPending: boolean;
+  busy: boolean;
+  isLeaderSeat: boolean;
+  onAddBot: () => void;
+  onRemove: () => void;
+  onSwapClick: () => void;
+}) {
+  const team = seat.seat % 2;
+  const empty = !seat.user_id && !seat.is_bot;
+  const teamColor = team === 0 ? 'border-l-emerald-500' : 'border-l-sky-500';
+  const ringClass = isSwapPicked ? 'ring-2 ring-violet-400' : seat.isMe ? 'ring-1 ring-emerald-500/70' : '';
+
+  return (
+    <div
+      className={`rounded-lg border border-slate-700 border-l-4 ${teamColor} bg-slate-800 p-3 ${ringClass}`}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs text-slate-400">
+          Seat {seat.seat} · team {team}
+        </div>
+        {isLeaderSeat && (
+          <span className="text-[10px] uppercase tracking-wider text-amber-300">leader</span>
+        )}
+      </div>
+      <div className="font-medium text-base">
+        {empty ? (
+          <span className="text-slate-500 italic">empty</span>
+        ) : seat.is_bot ? (
+          <span className="text-slate-300">Bot</span>
+        ) : (
+          <>
+            {seat.username}
+            {seat.isMe && <span className="ml-2 text-xs text-emerald-400">(you)</span>}
+          </>
+        )}
+      </div>
+      {isLeader && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {empty && (
+            <button
+              onClick={onAddBot}
+              disabled={busy}
+              className="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1 text-xs disabled:opacity-50"
+            >
+              Add bot
+            </button>
+          )}
+          {!empty && !seat.isMe && (
+            <button
+              onClick={onRemove}
+              disabled={busy}
+              className="rounded border border-slate-600 hover:bg-slate-700 px-2 py-1 text-xs disabled:opacity-50"
+            >
+              {seat.is_bot ? 'Remove bot' : 'Kick'}
+            </button>
+          )}
+          {!empty && (
+            <button
+              onClick={onSwapClick}
+              disabled={busy}
+              className={`rounded px-2 py-1 text-xs disabled:opacity-50 ${
+                isSwapPicked
+                  ? 'bg-violet-600 hover:bg-violet-500'
+                  : 'border border-slate-600 hover:bg-slate-700'
               }`}
             >
-              <span className="text-sm">
-                <span className="text-slate-400 mr-2">Seat {s.seat}</span>
-                <span className="text-xs text-slate-500">team {s.seat % 2}</span>
-              </span>
-              <span className="text-sm font-medium">
-                {s.username ?? <span className="text-slate-500">empty</span>}
-                {s.isMe && <span className="ml-2 text-xs text-emerald-400">(you)</span>}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+              {isSwapPicked ? 'Cancel' : hasSwapPickPending ? 'Swap here' : 'Swap'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 // POST /functions/v1/join-euchre-room
 // Body: { invite_code: string, seat?: 0|1|2|3 }
-// Seats the caller; if all 4 are filled, atomically transitions to 'playing' and deals hand 1.
+// Seats the caller in a private-room lobby. Does NOT start the game —
+// the room leader does that explicitly via euchre-room-action.
 // Returns: { game_id, invite_code, seat, status }
 
 import {
@@ -11,14 +12,7 @@ import {
   preflight,
   readJson,
 } from '../_shared/http.ts';
-import {
-  buildDealForHand,
-  loadEuchreState,
-  loadGame,
-  loadPlayers,
-} from '../_shared/games/euchre/state.ts';
-import { autoAdvanceBots } from '../_shared/games/euchre/auto_advance.ts';
-import type { Seat } from '../_shared/games/euchre/euchre.ts';
+import { loadGame, loadPlayers } from '../_shared/games/euchre/state.ts';
 
 interface Body {
   invite_code: string;
@@ -102,75 +96,6 @@ Deno.serve(async (req) => {
     payload: { user_id: user.id },
   });
 
-  // Re-count and try to transition if we filled the last seat.
-  const seatedCount = players.length + 1;
-  if (seatedCount < 4) {
-    return json({
-      game_id: game.id,
-      invite_code: game.invite_code,
-      seat: chosen,
-      status: 'lobby',
-    });
-  }
-
-  // Attempt atomic lobby→playing transition. Only one concurrent joiner wins.
-  const { data: started, error: tErr } = await admin
-    .from('games')
-    .update({ status: 'playing' })
-    .eq('id', game.id)
-    .eq('status', 'lobby')
-    .select('id')
-    .maybeSingle();
-  if (tErr) return fail(500, 'db_start', tErr.message);
-
-  if (started) {
-    // We won the race — deal hand 1.
-    const seated = await loadPlayers(admin, game.id);
-    const euState = await loadEuchreState(admin, game.id);
-    if (!euState) return fail(500, 'no_euchre_state', 'euchre_games row missing');
-
-    // Dealer rotation start: keep the dealer chosen at room creation.
-    const deal = buildDealForHand(game.id, seated, euState.dealer_seat as Seat, 1);
-
-    const { error: hErr } = await admin.from('game_hands').upsert(deal.hands);
-    if (hErr) return fail(500, 'db_deal_hands', hErr.message);
-
-    const { error: euErr } = await admin
-      .from('euchre_games')
-      .update({
-        hand_number: 1,
-        upcard: deal.euchre.upcard,
-        upcard_status: deal.euchre.upcard_status,
-        trump_suit: null,
-        maker_seat: null,
-        alone_seat: null,
-        current_trick_id: null,
-      })
-      .eq('game_id', game.id);
-    if (euErr) return fail(500, 'db_euchre_update', euErr.message);
-
-    const { error: gUErr } = await admin
-      .from('games')
-      .update({
-        current_seat: deal.current_seat,
-        turn_deadline: deal.turn_deadline,
-      })
-      .eq('id', game.id);
-    if (gUErr) return fail(500, 'db_game_update', gUErr.message);
-
-    await admin.from('game_actions').insert({
-      game_id: game.id,
-      seat: euState.dealer_seat,
-      action_type: 'deal_hand',
-      payload: { hand_number: 1, dealer_seat: euState.dealer_seat },
-    });
-
-    // Initial deal: if any seats are bots (shouldn't be at game start, but
-    // safe), advance through them.
-    await autoAdvanceBots(admin, game.id);
-  }
-
-  // Fetch authoritative status (whether we won the race or not).
   const fresh = await loadGame(admin, game.id);
   return json({
     game_id: game.id,

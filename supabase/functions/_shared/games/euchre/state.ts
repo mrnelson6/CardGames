@@ -32,6 +32,7 @@ export interface FullGame {
   team1_score: number;
   turn_deadline: string | null;
   invite_code: string | null;
+  leader_id: string | null;
 }
 
 export interface EuchreRow {

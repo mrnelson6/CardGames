@@ -90,4 +90,16 @@ export const euchreApi = {
       'accept-game-invite',
       { invite_id },
     ),
+  roomAddBot: (game_id: string, seat: number) =>
+    invoke<{ ok: true }>('euchre-room-action', { game_id, op: 'add_bot', seat }),
+  roomRemoveSeat: (game_id: string, seat: number) =>
+    invoke<{ ok: true }>('euchre-room-action', { game_id, op: 'remove_seat', seat }),
+  roomSwapSeats: (game_id: string, seat_a: number, seat_b: number) =>
+    invoke<{ ok: true }>('euchre-room-action', { game_id, op: 'swap_seats', seat_a, seat_b }),
+  roomStart: (game_id: string, opts?: { randomize?: boolean; fill_bots?: boolean }) =>
+    invoke<{ ok: true; status: string }>('euchre-room-action', {
+      game_id, op: 'start',
+      randomize: opts?.randomize ?? false,
+      fill_bots: opts?.fill_bots ?? false,
+    }),
 };

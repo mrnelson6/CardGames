@@ -26,13 +26,14 @@ const teamOf = (seat: number): 0 | 1 => (seat % 2) as 0 | 1;
 
 const SEAT_POSITION_FROM_VIEWPOINT: Record<number, string> = {
   // We rotate so the viewer sits at "south" (bottom).
-  // West and east are vertically offset (top vs bottom of the middle
-  // row) so their seat panels don't share a horizontal line with the
-  // played-card cells of the trick area on narrow viewports.
+  // On narrow viewports west/east are vertically offset (top-left and
+  // bottom-right of the middle row) so their seat panels don't share a
+  // horizontal line with the played-card cells. From sm: up there's
+  // room for the trick area to fit between centred side panels.
   0: 'col-start-2 row-start-3 place-self-center',
-  1: 'col-start-1 row-start-2 self-start justify-self-start',
+  1: 'col-start-1 row-start-2 self-start justify-self-start sm:place-self-center',
   2: 'col-start-2 row-start-1 place-self-center',
-  3: 'col-start-3 row-start-2 self-end justify-self-end',
+  3: 'col-start-3 row-start-2 self-end justify-self-end sm:place-self-center',
 };
 
 export function EuchreGamePage() {

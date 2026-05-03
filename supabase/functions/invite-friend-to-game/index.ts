@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
     const code = generateInviteCode();
     const { data, error } = await admin
       .from('games')
-      .insert({ game: 'euchre', status: 'lobby', team0_score: 0, team1_score: 0, invite_code: code })
+      .insert({ game: 'euchre', status: 'lobby', team0_score: 0, team1_score: 0, invite_code: code, leader_id: user.id })
       .select('id, invite_code')
       .single();
     if (!error && data) { game = data; break; }

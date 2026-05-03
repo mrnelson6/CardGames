@@ -33,6 +33,7 @@ Deno.serve(async (req) => {
         team0_score: 0,
         team1_score: 0,
         invite_code: code,
+        leader_id: user.id,
       })
       .select('id, invite_code')
       .single();

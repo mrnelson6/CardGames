@@ -12,14 +12,7 @@ import {
   preflight,
   readJson,
 } from '../_shared/http.ts';
-import {
-  buildDealForHand,
-  loadEuchreState,
-  loadGame,
-  loadPlayers,
-} from '../_shared/games/euchre/state.ts';
-import { autoAdvanceBots } from '../_shared/games/euchre/auto_advance.ts';
-import type { Seat } from '../_shared/games/euchre/euchre.ts';
+import { loadGame, loadPlayers } from '../_shared/games/euchre/state.ts';
 
 interface Body { invite_id: string }
 
@@ -89,45 +82,6 @@ Deno.serve(async (req) => {
       action_type: 'accept_invite',
       payload: { from_invite: invite.id },
     });
-
-    // 4th player triggers the same start-game logic as join-euchre-room.
-    if (players.length + 1 >= 4) {
-      const { data: started } = await admin
-        .from('games')
-        .update({ status: 'playing' })
-        .eq('id', invite.game_id)
-        .eq('status', 'lobby')
-        .select('id')
-        .maybeSingle();
-      if (started) {
-        const seated = await loadPlayers(admin, invite.game_id);
-        const euState = await loadEuchreState(admin, invite.game_id);
-        if (euState) {
-          const deal = buildDealForHand(invite.game_id, seated, euState.dealer_seat as Seat, 1);
-          await admin.from('game_hands').upsert(deal.hands);
-          await admin.from('euchre_games').update({
-            hand_number: 1,
-            upcard: deal.euchre.upcard,
-            upcard_status: deal.euchre.upcard_status,
-            trump_suit: null,
-            maker_seat: null,
-            alone_seat: null,
-            current_trick_id: null,
-          }).eq('game_id', invite.game_id);
-          await admin.from('games').update({
-            current_seat: deal.current_seat,
-            turn_deadline: deal.turn_deadline,
-          }).eq('id', invite.game_id);
-          await admin.from('game_actions').insert({
-            game_id: invite.game_id,
-            seat: euState.dealer_seat,
-            action_type: 'deal_hand',
-            payload: { hand_number: 1, dealer_seat: euState.dealer_seat },
-          });
-          await autoAdvanceBots(admin, invite.game_id);
-        }
-      }
-    }
   }
 
   // Consume the invite.
