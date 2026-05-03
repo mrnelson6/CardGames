@@ -307,12 +307,20 @@ export function EuchreGamePage() {
       });
   }, [players]);
 
-  if (!session) return <Navigate to="/login" replace />;
-
+  // All hooks must run unconditionally before any early returns. The
+  // chat + mute hooks live here too — placing them after the
+  // !game || !eu guard would skip their first invocation and throw on
+  // the next render once the data loads (Rules of Hooks).
   const mySeat = useMemo<Seat | null>(() => {
+    if (!session) return null;
     const me = players.find((p) => p.user_id === session.user.id);
     return me ? (me.seat as Seat) : null;
   }, [players, session]);
+
+  const chat = useChat(game?.id ?? null, mySeat, session?.user.id ?? null);
+  const { mutes, toggle: toggleMute } = useMutes();
+
+  if (!session) return <Navigate to="/login" replace />;
 
   if (!game || !eu) {
     return (
@@ -404,8 +412,6 @@ export function EuchreGamePage() {
   const myPlayerRow = mySeat !== null ? players.find((p) => p.seat === mySeat) : undefined;
   const meIsBot = myPlayerRow?.is_bot === true;
 
-  const chat = useChat(game.id, mySeat, session.user.id);
-  const { mutes, toggle: toggleMute } = useMutes();
   const bubbleBySeat = chat.latestBySeat(mutes);
 
   function guard<T>(fn: () => Promise<T>): () => Promise<void> {
