@@ -68,9 +68,14 @@ export const euchreApi = {
   leaveParty: () =>
     invoke<{ ok: true; was_in_party?: boolean; disbanded?: boolean }>('leave-party', {}),
   inviteToParty: (to_user: string) =>
-    invoke<{ ok: true; party_id: string; invite_code?: string; already_member?: boolean }>(
+    invoke<{ ok: true; party_id: string; invite_id?: string; already_member?: boolean }>(
       'invite-to-party',
       { to_user },
+    ),
+  acceptPartyInvite: (invite_id: string) =>
+    invoke<{ party_id: string; invite_code: string; already_member?: boolean }>(
+      'accept-party-invite',
+      { invite_id },
     ),
   resumeControl: (game_id: string) =>
     invoke<{ ok: true; was_bot: boolean }>('resume-control', { game_id }),

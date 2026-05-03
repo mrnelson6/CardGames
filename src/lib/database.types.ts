@@ -170,6 +170,11 @@ export interface Database {
         Insert: Pick<GameInviteRow, 'from_user' | 'to_user' | 'game_id' | 'invite_code'>;
         Update: Partial<GameInviteRow>;
       };
+      party_invites: {
+        Row: PartyInviteRow;
+        Insert: Pick<PartyInviteRow, 'from_user' | 'to_user' | 'party_id' | 'invite_code'>;
+        Update: Partial<PartyInviteRow>;
+      };
     };
   };
 }
@@ -179,6 +184,15 @@ export interface GameInviteRow {
   from_user: string;
   to_user: string;
   game_id: string;
+  invite_code: string;
+  created_at: string;
+}
+
+export interface PartyInviteRow {
+  id: string;
+  from_user: string;
+  to_user: string;
+  party_id: string;
   invite_code: string;
   created_at: string;
 }

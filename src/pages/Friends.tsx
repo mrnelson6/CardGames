@@ -265,7 +265,7 @@ export function Friends() {
     setError(null);
     try {
       const r = await euchreApi.inviteToParty(toUser);
-      flash(r.already_member ? 'Already in your party.' : 'Invited!');
+      flash(r.already_member ? 'Already in your party.' : 'Party invite sent.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

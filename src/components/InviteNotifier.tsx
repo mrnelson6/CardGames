@@ -1,5 +1,5 @@
-// App-level toast that listens for incoming game_invites for the signed-in
-// user and offers Accept / Decline. Mounted in App.tsx so it works on every
+// App-level toast that listens for incoming game and party invitations
+// and offers Accept / Decline. Mounted in App.tsx so it works on every
 // authenticated page.
 
 import { useEffect, useState } from 'react';
@@ -8,49 +8,84 @@ import { supabase } from '../lib/supabase';
 import { subscribeWithReconnect } from '../lib/realtime';
 import { useAuth } from '../lib/auth';
 import { euchreApi } from '../games/euchre/api';
-import type { GameInviteRow, ProfileRow } from '../lib/database.types';
+import type { GameInviteRow, PartyInviteRow, ProfileRow } from '../lib/database.types';
 
-interface InviteWithName extends GameInviteRow {
+type Kind = 'game' | 'party';
+interface Invite {
+  kind: Kind;
+  id: string;
+  from_user: string;
   from_username: string | null;
+  // Game-only:
+  game_id?: string;
+  game_invite_code?: string;
+  // Party-only:
+  party_id?: string;
 }
 
 export function InviteNotifier() {
   const { session } = useAuth();
   const me = session?.user.id ?? null;
   const navigate = useNavigate();
-  const [invites, setInvites] = useState<InviteWithName[]>([]);
+  const [invites, setInvites] = useState<Invite[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!me) { setInvites([]); return; }
 
-    const decorate = async (rows: GameInviteRow[]): Promise<InviteWithName[]> => {
-      if (rows.length === 0) return [];
-      const ids = Array.from(new Set(rows.map((r) => r.from_user)));
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('user_id, username')
-        .in('user_id', ids);
-      const nameByUser = new Map<string, string>();
-      for (const p of (profiles ?? []) as Pick<ProfileRow, 'user_id' | 'username'>[]) {
-        nameByUser.set(p.user_id, p.username);
-      }
-      return rows.map((r) => ({ ...r, from_username: nameByUser.get(r.from_user) ?? null }));
-    };
-
     const refresh = async () => {
-      const { data } = await supabase
-        .from('game_invites')
-        .select('*')
-        .eq('to_user', me)
-        .order('created_at', { ascending: false });
-      const decorated = await decorate((data ?? []) as GameInviteRow[]);
-      setInvites(decorated);
+      const [gameResp, partyResp] = await Promise.all([
+        supabase
+          .from('game_invites')
+          .select('*')
+          .eq('to_user', me)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('party_invites')
+          .select('*')
+          .eq('to_user', me)
+          .order('created_at', { ascending: false }),
+      ]);
+      const games = (gameResp.data ?? []) as GameInviteRow[];
+      const parties = (partyResp.data ?? []) as PartyInviteRow[];
+
+      const senderIds = new Set<string>();
+      games.forEach((r) => senderIds.add(r.from_user));
+      parties.forEach((r) => senderIds.add(r.from_user));
+      const nameByUser = new Map<string, string>();
+      if (senderIds.size > 0) {
+        const { data: profs } = await supabase
+          .from('profiles')
+          .select('user_id, username')
+          .in('user_id', Array.from(senderIds));
+        for (const p of (profs ?? []) as Pick<ProfileRow, 'user_id' | 'username'>[]) {
+          nameByUser.set(p.user_id, p.username);
+        }
+      }
+
+      const merged: Invite[] = [
+        ...games.map((r) => ({
+          kind: 'game' as const,
+          id: r.id,
+          from_user: r.from_user,
+          from_username: nameByUser.get(r.from_user) ?? null,
+          game_id: r.game_id,
+          game_invite_code: r.invite_code,
+        })),
+        ...parties.map((r) => ({
+          kind: 'party' as const,
+          id: r.id,
+          from_user: r.from_user,
+          from_username: nameByUser.get(r.from_user) ?? null,
+          party_id: r.party_id,
+        })),
+      ];
+      setInvites(merged);
     };
     refresh();
 
-    const unsub = subscribeWithReconnect({
+    const unsubGame = subscribeWithReconnect({
       channel: `game-invites-${me}`,
       configure: (ch) =>
         ch.on(
@@ -59,18 +94,29 @@ export function InviteNotifier() {
           refresh,
         ),
     });
-    return () => { unsub(); };
+    const unsubParty = subscribeWithReconnect({
+      channel: `party-invites-${me}`,
+      configure: (ch) =>
+        ch.on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'party_invites', filter: `to_user=eq.${me}` },
+          refresh,
+        ),
+    });
+    return () => { unsubGame(); unsubParty(); };
   }, [me]);
 
-  const accept = async (inv: InviteWithName) => {
+  const accept = async (inv: Invite) => {
     setBusyId(inv.id);
     setError(null);
     try {
-      const r = await euchreApi.acceptGameInvite(inv.id);
-      if (r.status === 'playing') {
-        navigate(`/games/euchre/g/${r.game_id}`);
+      if (inv.kind === 'game') {
+        const r = await euchreApi.acceptGameInvite(inv.id);
+        if (r.status === 'playing') navigate(`/games/euchre/g/${r.game_id}`);
+        else navigate(`/games/euchre/room/${r.invite_code}`);
       } else {
-        navigate(`/games/euchre/room/${r.invite_code}`);
+        await euchreApi.acceptPartyInvite(inv.id);
+        navigate('/');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -79,14 +125,12 @@ export function InviteNotifier() {
     }
   };
 
-  const decline = async (inv: InviteWithName) => {
+  const decline = async (inv: Invite) => {
     setBusyId(inv.id);
     setError(null);
     try {
-      const { error: dErr } = await supabase
-        .from('game_invites')
-        .delete()
-        .eq('id', inv.id);
+      const table = inv.kind === 'game' ? 'game_invites' : 'party_invites';
+      const { error: dErr } = await supabase.from(table).delete().eq('id', inv.id);
       if (dErr) throw new Error(dErr.message);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -95,9 +139,7 @@ export function InviteNotifier() {
     }
   };
 
-  if (!me || invites.length === 0) {
-    if (!error) return null;
-  }
+  if (!me || (invites.length === 0 && !error)) return null;
 
   return (
     <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
@@ -108,13 +150,17 @@ export function InviteNotifier() {
       )}
       {invites.map((inv) => (
         <div
-          key={inv.id}
-          className="rounded-lg bg-slate-800 border border-emerald-700 p-3 shadow-xl text-sm animate-in slide-in-from-right"
+          key={`${inv.kind}-${inv.id}`}
+          className="rounded-lg bg-slate-800 border border-emerald-700 p-3 shadow-xl text-sm"
         >
-          <div className="font-semibold text-emerald-300 mb-1">Game invite</div>
+          <div className="font-semibold text-emerald-300 mb-1">
+            {inv.kind === 'game' ? 'Game invite' : 'Party invite'}
+          </div>
           <div className="mb-3">
             <span className="font-medium">{inv.from_username ?? 'A friend'}</span>
-            {' '}wants to play Euchre with you.
+            {inv.kind === 'game'
+              ? ' wants to play Euchre with you.'
+              : ' invited you to their party.'}
           </div>
           <div className="flex gap-2">
             <button

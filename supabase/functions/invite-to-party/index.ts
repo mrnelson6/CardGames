@@ -1,8 +1,8 @@
 // POST /functions/v1/invite-to-party
 // Body: { to_user: uuid }
-// Leader-only. Direct-adds an existing friend to the caller's party.
-// Friendship is required (prevents random users adding strangers). The friend
-// can leave from the lobby if they don't want to be there.
+// Leader-only. Sends a pending party invitation that the friend must
+// accept before they're added to party_members. Friendship is required.
+// Returns: { ok, party_id, invite_id?, already_member?, already_invited? }
 
 import {
   adminClient,
@@ -31,7 +31,6 @@ Deno.serve(async (req) => {
 
   const admin = adminClient();
 
-  // Verify the caller leads a party.
   const { data: party, error: pErr } = await admin
     .from('parties')
     .select('id, leader_id, invite_code')
@@ -40,7 +39,6 @@ Deno.serve(async (req) => {
   if (pErr) return fail(500, 'db_party', pErr.message);
   if (!party) return fail(409, 'no_party', 'Create a party before inviting friends');
 
-  // Friendship check: canonicalized (user_a < user_b).
   const lo = user.id < body.to_user ? user.id : body.to_user;
   const hi = user.id < body.to_user ? body.to_user : user.id;
   const { data: friendship } = await admin
@@ -51,7 +49,6 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (!friendship) return fail(403, 'not_friends', 'You can only invite friends');
 
-  // Capacity + existing-membership checks.
   const { data: members } = await admin
     .from('party_members')
     .select('user_id')
@@ -62,7 +59,6 @@ Deno.serve(async (req) => {
   }
   if (memberIds.length >= 2) return fail(409, 'party_full', 'Party is full');
 
-  // The friend must not be in another party.
   const { data: other } = await admin
     .from('party_members')
     .select('party_id')
@@ -72,13 +68,21 @@ Deno.serve(async (req) => {
     return fail(409, 'friend_in_party', 'They are already in another party');
   }
 
-  const { error: insErr } = await admin
-    .from('party_members')
-    .insert({ party_id: party.id, user_id: body.to_user });
-  if (insErr) {
-    if (insErr.code === '23505') return json({ ok: true, party_id: party.id, already_member: true });
-    return fail(500, 'db_invite', insErr.message);
-  }
+  // Create or refresh the pending invite row.
+  const { data: invite, error: invErr } = await admin
+    .from('party_invites')
+    .upsert(
+      {
+        from_user: user.id,
+        to_user: body.to_user,
+        party_id: party.id,
+        invite_code: party.invite_code,
+      },
+      { onConflict: 'from_user,to_user,party_id' },
+    )
+    .select('id')
+    .single();
+  if (invErr) return fail(500, 'db_invite', invErr.message);
 
-  return json({ ok: true, party_id: party.id, invite_code: party.invite_code });
+  return json({ ok: true, party_id: party.id, invite_id: invite.id });
 });
