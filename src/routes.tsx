@@ -4,6 +4,7 @@ import { Lobby } from './pages/Lobby';
 import { Friends } from './pages/Friends';
 import { Profile } from './pages/Profile';
 import { Leaderboard } from './pages/Leaderboard';
+import { Admin } from './pages/Admin';
 import { EuchreGamePage } from './games/euchre/pages/Game';
 import { EuchreQueuePage } from './games/euchre/pages/Queue';
 import { EuchreRoomPage } from './games/euchre/pages/Room';
@@ -19,6 +20,7 @@ export function AppRoutes() {
         <Route path="/friends" element={<Friends />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/admin" element={<Admin />} />
         <Route path="/games/euchre/hotseat" element={<EuchreHotseatPage />} />
         <Route path="/games/euchre/play/:mode" element={<EuchreQueuePage />} />
         <Route path="/games/euchre/room/:code" element={<EuchreRoomPage />} />

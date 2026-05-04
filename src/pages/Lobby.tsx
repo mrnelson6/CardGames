@@ -44,6 +44,7 @@ export function Lobby() {
 
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [usernames, setUsernames] = useState<Map<string, string>>(new Map());
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const loadParty = useCallback(async () => {
     if (!me) return;
@@ -137,6 +138,24 @@ export function Lobby() {
       .then(({ data }) => {
         if (cancelled) return;
         setFriends((data ?? []) as FriendRow[]);
+      });
+    return () => { cancelled = true; };
+  }, [me]);
+
+  // Detect the admin so we can render the link in the header. Hardcoded
+  // username — kept consistent with the admin_stats() RPC's check.
+  useEffect(() => {
+    if (!me) return;
+    let cancelled = false;
+    supabase
+      .from('profiles')
+      .select('username')
+      .eq('user_id', me)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const username = (data as { username?: string } | null)?.username;
+        setIsAdmin(username === 'nellyfir30');
       });
     return () => { cancelled = true; };
   }, [me]);
@@ -262,6 +281,9 @@ export function Lobby() {
           <Link to="/leaderboard" className="hover:underline">Leaderboard</Link>
           <Link to="/friends" className="hover:underline">Friends</Link>
           <Link to="/profile" className="hover:underline">Profile</Link>
+          {isAdmin && (
+            <Link to="/admin" className="hover:underline text-amber-300">Admin</Link>
+          )}
           <button
             onClick={() => supabase.auth.signOut()}
             className="rounded border border-slate-600 px-3 py-1 hover:bg-slate-700"
