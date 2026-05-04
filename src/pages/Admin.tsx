@@ -74,26 +74,50 @@ export function Admin() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<number>(0);
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+
+  const reload = async () => {
+    const { data, error } = await supabase.rpc('admin_stats' as never);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    setStats(data as AdminStats);
+    setRefreshedAt(Date.now());
+    setError(null);
+  };
 
   useEffect(() => {
     if (!me) return;
     let cancelled = false;
-    const load = async () => {
-      const { data, error } = await supabase.rpc('admin_stats' as never);
-      if (cancelled) return;
-      if (error) {
-        setError(error.message);
-        setLoading(false);
-        return;
-      }
-      setStats(data as AdminStats);
-      setRefreshedAt(Date.now());
-      setLoading(false);
-    };
-    load();
-    const id = setInterval(load, REFRESH_MS);
+    (async () => {
+      await reload();
+      if (!cancelled) setLoading(false);
+    })();
+    const id = setInterval(() => {
+      if (!cancelled) void reload();
+    }, REFRESH_MS);
     return () => { cancelled = true; clearInterval(id); };
   }, [me]);
+
+  const onAbandonAll = async () => {
+    if (busy) return;
+    if (!confirm('Abandon every lobby/playing game right now? This is reversible only by replaying.')) return;
+    setBusy(true);
+    setInfo(null);
+    try {
+      const { data, error } = await supabase.rpc('admin_abandon_active_games' as never);
+      if (error) throw new Error(error.message);
+      const n = typeof (data as unknown) === 'number' ? (data as unknown as number) : 0;
+      setInfo(`Abandoned ${n} game${n === 1 ? '' : 's'}.`);
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (loading) {
     return <div className="p-6 text-slate-400">Loading admin stats…</div>;
@@ -127,8 +151,24 @@ export function Admin() {
         <Link to="/" className="text-sm hover:underline">← Lobby</Link>
       </header>
 
+      {info && (
+        <div className="mb-3 rounded bg-emerald-900/40 border border-emerald-700 p-2 text-sm text-emerald-200">
+          {info}
+        </div>
+      )}
+
       <section className="mb-6">
-        <h2 className="text-lg font-semibold mb-2">Live</h2>
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <h2 className="text-lg font-semibold">Live</h2>
+          <button
+            onClick={onAbandonAll}
+            disabled={busy || (stats.active_games + stats.lobby_games === 0)}
+            className="rounded border border-red-700 hover:bg-red-900/30 text-red-300 px-3 py-1 text-xs disabled:opacity-40"
+            title="Mark every lobby + playing game as abandoned. Auto-cleanup also runs every 10 min for games idle > 1 hour."
+          >
+            {busy ? 'Working…' : 'Abandon all active'}
+          </button>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Stat label="Active games" value={stats.active_games} />
           <Stat label="Lobby rooms" value={stats.lobby_games} />
